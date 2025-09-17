@@ -1,0 +1,17 @@
+flask
+pydicom
+numpy<2
+requests
+Pillow
+transformers>=4.44.0
+torch==2.6.0+cpu              # ✅ CPU-only PyTorch
+torchvision==0.21.0+cpu       # ✅ CPU-only torchvision
+--extra-index-url https://download.pytorch.org/whl/cpu
+accelerate>=0.33.0
+openai==0.28
+pylibjpeg
+pylibjpeg-libjpeg
+pylibjpeg-openjpeg
+gunicorn
+sentencepiece
+protobuf

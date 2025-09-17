@@ -1,0 +1,1 @@
+FROM ohif/app:latest

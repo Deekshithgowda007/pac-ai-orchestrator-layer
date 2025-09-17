@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+supabase
+python-dotenv
+requests
+prometheus_client
+pydicom
+python-multipart

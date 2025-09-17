@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OHIF (Direct Upload Mode)</title>
+</head>
+<body>
+  <script>
+    // We point OHIF to orchestrator's simplified DICOMweb-like endpoints.
+    window.config = {
+      servers: {
+        dicomWeb: [{
+          name: "LocalOrchestrator",
+          qidoRoot: "http://orchestrator:8000/dicom/studies",
+          wadoRoot: "http://orchestrator:8000/dicom" ,
+          wadoUriRoot: "http://orchestrator:8000/dicom"
+        }]
+      },
+      showStudyList: true
+    };
+  </script>
+  <div id="root"></div>
+  <script src="/app/app.js"></script>
+</body>
+</html>

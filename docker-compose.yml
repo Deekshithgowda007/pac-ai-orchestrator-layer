@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  ai_inference:
+    build: ./services/ai_inference
+    deploy:
+      replicas: 2
+    env_file: .env
+    environment:
+      - OPENAI_API_KEY=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
+      - HUGGINGFACE_API_TOKEN=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
+    expose:
+      - "8001"
+    networks: [pacnet]
+
+  orchestrator:
+    build: ./services/orchestrator
+    env_file: .env
+    environment:
+      - AI_HOST=ai_inference
+      - AI_PORT=8001
+      - SUPABASE_URL=https://eposvgsqtvwmqtlrwpuw.supabase.co
+      - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
+
+    depends_on:
+      - ai_inference
+    ports:
+      - "8000:8000"
+    networks: [pacnet]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks: [pacnet]
+
+  grafana:
+    image: grafana/grafana:latest
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./services/grafana/provisioning/datasource.yml:/etc/grafana/provisioning/datasource.yml:ro
+      - ./services/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/ai.json
+    networks: [pacnet]
+
+  ohif:
+    image: ohif/app:latest
+    ports:
+      - "3001:80"
+    networks: [pacnet]
+
+  proxy:
+    build: ./services/proxy
+    depends_on:
+      - ohif
+      - orchestrator
+    ports:
+      - "8443:443"
+    networks: [pacnet]
+
+networks:
+  pacnet:

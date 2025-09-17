@@ -1,0 +1,91 @@
+{
+  "id": null,
+  "title": "PAC AI Orchestrator - Monitoring",
+  "tags": ["AI Orchestrator", "Monitoring"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total Inference Requests",
+      "targets": [
+        {
+          "expr": "sum(orchestrator_requests_total)"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 3 }
+    },
+    {
+      "type": "stat",
+      "title": "Failed Jobs (Last 5m)",
+      "targets": [
+        {
+          "expr": "increase(orchestrator_failed_jobs_total[5m])"
+        }
+      ],
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 3 }
+    },
+    {
+      "type": "graph",
+      "title": "Inference Requests by Modality",
+      "targets": [
+        {
+          "expr": "sum by (modality)(orchestrator_requests_total)"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 3, "w": 12, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Average Job Duration (seconds)",
+      "targets": [
+        {
+          "expr": "rate(orchestrator_job_duration_seconds_sum[5m]) / rate(orchestrator_job_duration_seconds_count[5m])"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 6 }
+    },
+    {
+      "type": "gauge",
+      "title": "Jobs in Progress",
+      "targets": [
+        {
+          "expr": "orchestrator_jobs_in_progress"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 15, "w": 6, "h": 4 }
+    },
+    {
+      "type": "gauge",
+      "title": "Worker Utilization (%)",
+      "targets": [
+        {
+          "expr": "(orchestrator_jobs_in_progress / AI_WORKERS) * 100"
+        }
+      ],
+      "gridPos": { "x": 6, "y": 15, "w": 6, "h": 4 }
+    },
+    {
+      "type": "graph",
+      "title": "CPU Usage (Node Exporter)",
+      "targets": [
+        {
+          "expr": "100 - (avg by(instance)(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 19, "w": 6, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Memory Usage (Node Exporter)",
+      "targets": [
+        {
+          "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))"
+        }
+      ],
+      "gridPos": { "x": 6, "y": 19, "w": 6, "h": 6 }
+    }
+  ],
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5s"
+}
