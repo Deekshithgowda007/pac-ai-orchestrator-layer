@@ -1,8 +1,9 @@
 fastapi
 uvicorn[standard]
-supabase
 python-dotenv
 requests
-prometheus_client
+supabase
+prometheus-client
 pydicom
 python-multipart
+openai==0.28

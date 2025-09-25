@@ -1,18 +1,18 @@
 version: "3.9"
-
 services:
+  # ---------- AI Inference Service ----------
   ai_inference:
     build: ./services/ai_inference
-    deploy:
-      replicas: 2
     env_file: .env
     environment:
-      - OPENAI_API_KEY=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
-      - HUGGINGFACE_API_TOKEN=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
-    expose:
-      - "8001"
+      - OPENAI_API_KEY=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
+      - HUGGINGFACE_API_TOKEN=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
+      - AI_WORKERS=2
+    ports:
+      - "8001:8001"
     networks: [pacnet]
 
+  # ---------- Orchestrator Service ----------
   orchestrator:
     build: ./services/orchestrator
     env_file: .env
@@ -21,13 +21,67 @@ services:
       - AI_PORT=8001
       - SUPABASE_URL=https://eposvgsqtvwmqtlrwpuw.supabase.co
       - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
-
-    depends_on:
-      - ai_inference
+      - DCM4CHEE_BASE=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - PACS_QIDO_URLhttp://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - PACS_WADO_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - PACS_STOW_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - ENGINE_INSTANCES_CONFIG=MRI:Head=2,CT:Chest=1
     ports:
       - "8000:8000"
+    depends_on:
+      - ai_inference
+      - dcm4chee-arc
     networks: [pacnet]
 
+  # ---------- dcm4chee PACS + DB ----------
+  postgres:
+    image: dcm4che/postgres-dcm4chee:11.22-34
+    environment:
+      - POSTGRES_DB=pacsdb
+      - POSTGRES_USER=pacs
+      - POSTGRES_PASSWORD=pacs
+    networks: [pacnet]
+
+  ldap:
+    image: dcm4che/slapd-dcm4chee:2.6.8-34.1
+    environment:
+      - LDAP_ROOTPASS=secret
+    networks: [pacnet]
+
+  dcm4chee-arc:
+    image: dcm4che/dcm4chee-arc-psql:5.34.0
+    ports:
+      - "8080:8080"
+      - "11112:11112"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=pacsdb
+      - POSTGRES_USER=pacs
+      - POSTGRES_PASSWORD=pacs
+      - LDAP_URL=ldap://ldap:389
+      - LDAP_BASE_DN=dc=dcm4che,dc=org
+      - LDAP_ROOTPASS=secret
+      - WILDFLY_CHOWN=/opt/wildfly/standalone
+    depends_on: 
+      - postgres
+      - ldap
+    networks: [pacnet]
+
+  # ---------- OHIF Viewer ----------
+  ohif:
+    image: ohif/app:latest
+    ports:
+      - "3001:80"
+    environment:
+      - OHIF_DICOMWEB__SERVERS__0__NAME=dcm4chee
+      - OHIF_DICOMWEB__SERVERS__0__WADO_URI_ROOT=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/wado
+      - OHIF_DICOMWEB__SERVERS__0__WADO_RS_ROOT=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - OHIF_DICOMWEB__SERVERS__0__QIDO_RS_ROOT=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - OHIF_DICOMWEB__SERVERS__0__STOW_RS_ROOT=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+    networks: [pacnet]
+
+  # ---------- Monitoring ----------
   prometheus:
     image: prom/prometheus:latest
     volumes:
@@ -43,7 +97,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./services/grafana/provisioning/datasource.yml:/etc/grafana/provisioning/datasource.yml:ro
+      - ./services/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./services/grafana/dashboards:/var/lib/grafana/dashboards:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -51,19 +105,30 @@ services:
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/ai.json
     networks: [pacnet]
 
-  ohif:
-    image: ohif/app:latest
-    ports:
-      - "3001:80"
-    networks: [pacnet]
-
+  # Optional proxy for OHIF + orchestrator
   proxy:
-    build: ./services/proxy
+    image: nginx:stable
+    ports:
+      - "8443:443"
+    volumes:
+      - ./services/proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services/proxy/certs:/etc/ssl:ro
     depends_on:
       - ohif
       - orchestrator
-    ports:
-      - "8443:443"
+    networks: [pacnet]
+
+  # Poller that watches for new studies and POSTs to orchestrator
+  pacs_fetcher:
+    build: ./services/orchestrator
+    command: ["python","pacs_fetcher.py"]
+    env_file: .env
+    environment:
+      - DCM4CHEE_BASE=${PACS_QIDO_URL}
+      - ORCHESTRATOR_URL=http://orchestrator:8000/trigger-inference-pacs
+    depends_on:
+      - orchestrator
+      - dcm4chee-arc
     networks: [pacnet]
 
 networks:

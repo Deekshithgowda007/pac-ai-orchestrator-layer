@@ -1,40 +1,30 @@
-## Run (dev)
+# PACS-AI-ORCHESTRATION-LAYER
 
-1. Create `.env` with Supabase keys + OPENAI_API_KEY + HF_API_KEY. Example:
-   SUPABASE_URL=...
-   SUPABASE_KEY=...
-   OPENAI_API_KEY=sk-...
-   HF_API_KEY=hf-...
-   ENGINE_INSTANCES_CONFIG=MRI:Head=2,CT:Chest=1
+## Prereqs
+- Docker & Docker Compose
+- Supabase project (or a Postgres you can talk to) with API key
+- Replace secrets in `.env` (OPENAI_API_KEY, HF_API_KEY, SUPABASE_URL, SUPABASE_KEY)
 
-2. Ensure db schema includes the new tables. If using Supabase, run `db/supabase_schema.sql` with psql or Supabase SQL editor.
+## Bring up:
+docker compose up --build -d
 
-3. Build and start:
-   docker compose up --build -d
+Services:
+- dcm4chee UI: http://localhost:8080
+- OHIF viewer: http://localhost:3001
+- Orchestrator API: http://localhost:8000
+- AI inference: http://localhost:8001 (internal)
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (admin/admin)
 
-   Optionally scale worker:
-   docker compose up -d --scale ai_worker=2
+## Test flow (uploading .dcm locally using storescu)
+1) Send a DICOM to PACS:
+   storescu -c DCM4CHEE@localhost:11112 /path/to/file.dcm
 
-4. Insert at least one ai_model and routing_rules entry into Supabase (see README notes):
+2) poller pacs_fetcher will detect new study and call orchestrator -> orchestrator pulls instances and posts to ai_inference
+   You can also call orchestrator directly:
+   curl -X POST http://localhost:8000/trigger-inference-pacs -F "study_uid=1.2.3...."
 
-   ai_models:
-     - name: demo-otsu
-       version: v0
-       modality: CT
-       body_part: Head
-       route_label: demo-otsu
+3) Check orchestrator logs:
+   docker compose logs -f orchestrator
 
-   routing_rules:
-     - modality: CT
-       body_part: Head
-       ai_model_id: (id of demo-otsu)
-
-5. Trigger inference:
-   curl -X POST http://localhost:8000/trigger-inference \
-     -H "Content-Type: application/json" \
-     -d '{"modality":"CT","body_part":"Head","study_uid":"1.2.3.4.5"}'
-
-6. Check queue item:
-   curl http://localhost:8000/queue/<queue_id>
-
-7. Open OHIF at http://localhost:3001 (or via your proxy) to view the study and overlays.
+4) Check Supabase inference_logs/inference_results

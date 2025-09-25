@@ -2,7 +2,7 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 from fastapi import Request, Response
 import time
 
-REQS = Counter("orchestrator_requests_total","Total requests",["path","method","code"])
+REQS = Counter("orchestrator_requests_total","Total requests",["path","method","code","modality"])
 LAT  = Histogram("orchestrator_request_seconds","Latency",["path"])
 
 async def metrics_app(environ, start_response):
@@ -16,6 +16,10 @@ async def metrics_endpoint(request: Request):
 async def metrics_middleware(request: Request, call_next):
     start = time.time()
     response = await call_next(request)
+    try:
+        mod = getattr(request.state, "modality", "unknown")
+    except Exception:
+        mod = "unknown"
     LAT.labels(request.url.path).observe(time.time()-start)
-    REQS.labels(request.url.path, request.method, str(response.status_code)).inc()
+    REQS.labels(request.url.path, request.method, str(response.status_code), mod).inc()
     return response
