@@ -1,3 +1,9 @@
 #!/usr/bin/env bash
-set -e
-storescu -v -aec ${PACS_AET:-DCM4CHEE} ${PACS_HOST:-localhost} ${PACS_PORT:-11112} "$1"
+# Usage: ./send_to_pacs.sh /path/to/file.dcm
+FILE="$1"
+if [ -z "$FILE" ]; then
+  echo "Usage: $0 /path/to/file.dcm"
+  exit 1
+fi
+
+storescu -v -aec DCM4CHEE localhost 11112 "$FILE"
