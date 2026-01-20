@@ -1,9 +1,10 @@
 fastapi
 uvicorn[standard]
+supabase
 python-dotenv
 requests
-supabase
-prometheus-client
+prometheus_client
 pydicom
 python-multipart
-openai==0.28
+openai
+kafka-python

@@ -3,10 +3,9 @@ services:
   # ---------- AI Inference Service ----------
   ai_inference:
     build: ./services/ai_inference
-    env_file: .env
     environment:
       - OPENAI_API_KEY=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
-      - HUGGINGFACE_API_TOKEN=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
+      - HF_API_KEY=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
       - AI_WORKERS=2
     ports:
       - "8001:8001"
@@ -15,22 +14,25 @@ services:
   # ---------- Orchestrator Service ----------
   orchestrator:
     build: ./services/orchestrator
-    env_file: .env
     environment:
       - AI_HOST=ai_inference
       - AI_PORT=8001
       - SUPABASE_URL=https://eposvgsqtvwmqtlrwpuw.supabase.co
       - SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
-      - DCM4CHEE_BASE=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
-      - PACS_QIDO_URLhttp://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
-      - PACS_WADO_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - PACS_QIDO_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      - PACS_WADO_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/wado
       - PACS_STOW_URL=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
-      - ENGINE_INSTANCES_CONFIG=MRI:Head=2,CT:Chest=1
+      - ENGINE_INSTANCES_CONFIG=default_engine:ai_inference:8001
+      - AI_FALLBACK_ENGINES=default_engine
+      - ELK_HTTP=http://elk:9200
+      - OPENAI_API_KEY=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
+      - OPENAI_MODEL=gpt-4o
     ports:
-      - "8000:8000"
+      - "8010:8000"
     depends_on:
       - ai_inference
       - dcm4chee-arc
+      - prometheus
     networks: [pacnet]
 
   # ---------- dcm4chee PACS + DB ----------
@@ -51,7 +53,7 @@ services:
   dcm4chee-arc:
     image: dcm4che/dcm4chee-arc-psql:5.34.0
     ports:
-      - "8080:8080"
+      - "8090:8080"
       - "11112:11112"
     environment:
       - POSTGRES_HOST=postgres
@@ -63,7 +65,7 @@ services:
       - LDAP_BASE_DN=dc=dcm4che,dc=org
       - LDAP_ROOTPASS=secret
       - WILDFLY_CHOWN=/opt/wildfly/standalone
-    depends_on: 
+    depends_on:
       - postgres
       - ldap
     networks: [pacnet]
@@ -81,15 +83,27 @@ services:
       - OHIF_DICOMWEB__SERVERS__0__STOW_RS_ROOT=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
     networks: [pacnet]
 
-  # ---------- Monitoring ----------
+  # ---------- ELK (logstash + kibana + elastic all-in-one) ----------
+  elk:
+    build:
+      context: ./services/elk
+    container_name: elk
+    ports:
+      - "5044:5044"
+    volumes:
+      - ./services/elk/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+      - ./services/elk/pipelines.yml:/usr/share/logstash/config/pipelines.yml
+
+  # ---------- Prometheus ----------
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./services/prometheus/Prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
     networks: [pacnet]
 
+  # ---------- Grafana ----------
   grafana:
     image: grafana/grafana:latest
     depends_on:
@@ -107,7 +121,7 @@ services:
 
   # Optional proxy for OHIF + orchestrator
   proxy:
-    image: nginx:stable
+    build: ./services/proxy
     ports:
       - "8443:443"
     volumes:
@@ -122,14 +136,57 @@ services:
   pacs_fetcher:
     build: ./services/orchestrator
     command: ["python","pacs_fetcher.py"]
-    env_file: .env
     environment:
-      - DCM4CHEE_BASE=${PACS_QIDO_URL}
+      - DCM4CHEE_BASE=http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
       - ORCHESTRATOR_URL=http://orchestrator:8000/trigger-inference-pacs
     depends_on:
       - orchestrator
       - dcm4chee-arc
     networks: [pacnet]
+
+      # ---------- Zookeeper ----------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks: [pacnet]
+
+  # ---------- Kafka ----------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks: [pacnet]
+
+  kafka_orchestrator:
+   build: ./services/orchestrator
+   container_name: kafka_orchestrator
+   command: ["python", "-u", "kafka_worker.py"]
+   environment:
+    KAFKA_BROKERS: kafka:29092
+    KAFKA_TOPIC: study.ingested
+    SUPABASE_URL: https://eposvgsqtvwmqtlrwpuw.supabase.co
+    SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
+   depends_on:
+    - kafka
+   networks:
+    - pacnet
+
 
 networks:
   pacnet:
