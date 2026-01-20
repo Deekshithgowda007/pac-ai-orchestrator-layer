@@ -7,4 +7,7 @@ prometheus_client
 pydicom
 python-multipart
 openai
+<<<<<<< HEAD
 kafka-python
+=======
+>>>>>>> 848eaec7eeb0d9bfb49ce9f5ac4982789a55ee17

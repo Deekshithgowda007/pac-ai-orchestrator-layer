@@ -94,6 +94,7 @@ create table if not exists results (
     created_at timestamptz default now()
 );
 
+<<<<<<< HEAD
 create table study_queue (
   id uuid primary key default gen_random_uuid(),
   study_uid text not null,
@@ -102,5 +103,7 @@ create table study_queue (
   created_at timestamptz default now()
 );
 
+=======
+>>>>>>> 848eaec7eeb0d9bfb49ce9f5ac4982789a55ee17
 -- index to pick earliest high-priority pending jobs
 create index if not exists idx_inference_queue_pending_priority on inference_queue(status, priority, created_at);
