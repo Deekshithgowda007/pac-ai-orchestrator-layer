@@ -2,10 +2,12 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+# Copy requirements first (for caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy all code
 COPY . .
 
-# Use Gunicorn as entrypoint (production WSGI server)
-CMD ["gunicorn", "--workers=2", "--threads=4", "--timeout=600", "--bind=0.0.0.0:8001", "server:app"]
+# Run the worker
+CMD ["python", "-u", "ai_worker.py"]

@@ -5,12 +5,14 @@ services:
   ai_inference:
     build: ./services/ai_inference
     environment:
+      DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
       OPENAI_API_KEY: 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
       HF_API_KEY: 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
       AI_WORKERS: 2
     ports:
       - "8001:8001"
     networks: [pacnet]
+    
 
   orchestrator:
     build: ./services/orchestrator
@@ -157,10 +159,11 @@ services:
     container_name: pacs_fetcher
     environment:
       DCM4CHEE_BASE: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+      DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
       KAFKA_BROKERS: kafka:29092
     depends_on:
-      - kafka
-      - dcm4chee-arc
+    - kafka
+    - dcm4chee-arc
     restart: always
     networks: [pacnet]
 
@@ -178,6 +181,21 @@ services:
     SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
    networks: [pacnet]
 
+  ai_worker:
+   build:
+    context: ./services/ai_inference
+    dockerfile: Dockerfile
+   container_name: ai_worker
+   depends_on:
+    - dcm4chee-arc
+   environment:
+    SUPABASE_URL: https://eposvgsqtvwmqtlrwpuw.supabase.co
+    SUPABASE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
+    DCM4CHEE_WADO: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
+    DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
+    restart: unless-stopped
+   networks: [pacnet]
+    
 # volumes:
 #    pgdata:
 #    dcm4chee-data:
