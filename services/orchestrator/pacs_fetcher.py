@@ -2,6 +2,7 @@ import os
 import json
 import time
 import requests
+import email
 from kafka import KafkaProducer
 
 print("🟡 pacs_fetcher starting", flush=True)
@@ -9,15 +10,12 @@ print("🟡 pacs_fetcher starting", flush=True)
 # -------------------------------------------------
 # ENV (INSIDE DOCKER → USE 8080)
 # -------------------------------------------------
-QIDO_BASE = os.getenv(
-    "DCM4CHEE_BASE",
-    "http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs"
-)
+QIDO_BASE = "http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs"
 
-KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
+KAFKA_BROKERS = "kafka:29092"
 TOPIC = "study.ingested"
 
-BASE_DICOM_DIR = os.getenv("DICOM_STORE", "/data/dicom")
+BASE_DICOM_DIR = "/data/dicom"
 SEEN_FILE = "/tmp/seen.json"
 
 os.makedirs(BASE_DICOM_DIR, exist_ok=True)
@@ -102,6 +100,9 @@ while True:
             study_dir = f"{BASE_DICOM_DIR}/{study_uid}"
             os.makedirs(study_dir, exist_ok=True)
 
+            # -------------------------------------------------
+            # GET SERIES
+            # -------------------------------------------------
             sr = requests.get(
                 f"{QIDO_BASE}/studies/{study_uid}/series",
                 headers={"Accept": "application/dicom+json"},
@@ -113,6 +114,9 @@ while True:
             for series in sr.json():
                 series_uid = series["0020000E"]["Value"][0]
 
+                # -------------------------------------------------
+                # GET INSTANCES
+                # -------------------------------------------------
                 ir = requests.get(
                     f"{QIDO_BASE}/studies/{study_uid}/series/{series_uid}/instances",
                     headers={"Accept": "application/dicom+json"},
@@ -131,17 +135,39 @@ while True:
                     print(f"📥 Downloading {sop_uid}", flush=True)
 
                     dicom = requests.get(
-                    f"{QIDO_BASE}/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}",
-                     headers={
-                        "Accept": "multipart/related; type=application/dicom"
-                    },
-                    timeout=120
+                        f"{QIDO_BASE}/studies/{study_uid}/series/{series_uid}/instances/{sop_uid}",
+                        headers={
+                            "Accept": "multipart/related; type=application/dicom"
+                        },
+                        timeout=120
                     )
+
                     dicom.raise_for_status()
 
-                    with open(out_path, "wb") as f:
-                        f.write(dicom.content)
+                    # -------------------------------------------------
+                    # PARSE MULTIPART RESPONSE CORRECTLY
+                    # -------------------------------------------------
+                    content_type = dicom.headers.get("Content-Type")
 
+                    msg = email.message_from_bytes(
+                        b"Content-Type: " + content_type.encode() + b"\r\n\r\n" + dicom.content
+                    )
+
+                    saved = False
+
+                    for part in msg.walk():
+                        if part.get_content_type() == "application/dicom":
+                            with open(out_path, "wb") as f:
+                                f.write(part.get_payload(decode=True))
+                            saved = True
+                            break
+
+                    if not saved:
+                        print("⚠️ No DICOM part found in multipart response", flush=True)
+
+            # -------------------------------------------------
+            # PUBLISH TO KAFKA
+            # -------------------------------------------------
             payload = {
                 "study_uid": study_uid,
                 "modality": modality,

@@ -18,3 +18,5 @@ protobuf
 supabase
 python-multipart
 prometheus_client
+pydicom
+pynetdicom
