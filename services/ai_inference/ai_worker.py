@@ -17,7 +17,7 @@ from kafka import KafkaProducer
 SUPABASE_URL = "https://eposvgsqtvwmqtlrwpuw.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg"
 
-WEBHOOK_URL = "https://webhook.site/c65664e6-6e21-4c30-bef7-b0ce764d7a74"
+WEBHOOK_URL = "https://webhook.site/5e1e0d02-7f15-4de2-85dd-7de809d3f7aa"
 
 # 🔥 Kafka Config (ASK YOUR FRIEND FOR THIS)
 KAFKA_BOOTSTRAP_SERVERS = "172.16.16.39:9092"
@@ -40,14 +40,17 @@ def create_kafka_producer():
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                 retries=5,
                 linger_ms=10,
-                request_timeout_ms=20000
+                request_timeout_ms=60000,
+                max_request_size=20000000,
+                retry_backoff_ms=3000,
+                acks="all"
             )
             print("✅ Connected to Kafka:", KAFKA_BOOTSTRAP_SERVERS)
             return producer
         except Exception as e:
             print("⏳ Waiting for Kafka broker...", str(e))
             time.sleep(5)
-
+            
 producer = create_kafka_producer()
 
 print(f"🤖 AI Worker started ({WORKER_ID})")
