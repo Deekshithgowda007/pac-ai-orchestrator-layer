@@ -1,0 +1,171 @@
+<html>
+
+<head>
+<title>Hospital Dashboard</title>
+
+<style>
+
+*{
+margin:0;
+padding:0;
+box-sizing:border-box;
+font-family:"Segoe UI",Arial;
+}
+
+body{
+background:#f4f7fb;
+}
+
+/* HEADER */
+
+.header{
+height:60px;
+background:#0d6efd;
+color:white;
+display:flex;
+align-items:center;
+padding-left:25px;
+font-size:20px;
+font-weight:600;
+}
+
+/* MAIN LAYOUT */
+
+.main{
+display:flex;
+height:calc(100vh - 60px);
+}
+
+/* SIDEBAR */
+
+.sidebar{
+width:220px;
+background:white;
+border-right:1px solid #e5e5e5;
+padding-top:20px;
+}
+
+.sidebar a{
+display:block;
+padding:15px 20px;
+color:#333;
+text-decoration:none;
+font-weight:500;
+}
+
+.sidebar a:hover{
+background:#f0f4ff;
+color:#0d6efd;
+}
+
+/* CONTENT */
+
+.content{
+flex:1;
+padding:40px;
+}
+
+/* CARD */
+
+.card{
+background:white;
+padding:30px;
+border-radius:10px;
+box-shadow:0 5px 15px rgba(0,0,0,0.1);
+max-width:500px;
+}
+
+/* INPUT */
+
+input{
+width:100%;
+padding:10px;
+margin-top:10px;
+margin-bottom:15px;
+border:1px solid #ccc;
+border-radius:6px;
+}
+
+/* BUTTON */
+
+button{
+background:#0d6efd;
+border:none;
+color:white;
+padding:12px;
+width:100%;
+border-radius:6px;
+cursor:pointer;
+font-weight:600;
+}
+
+button:hover{
+background:#0b5ed7;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="header">
+Scansure Radiology Portal
+</div>
+
+<div class="main">
+
+<div class="sidebar">
+<a href="#">Dashboard</a>
+<a href="#">Upload Scan</a>
+<a href="#">Studies</a>
+<a href="#">Reports</a>
+<a href="#">Logout</a>
+</div>
+
+<div class="content">
+
+<h2>Upload DICOM Study</h2>
+<br>
+
+<div class="card">
+
+<input type="file" id="dicom">
+
+<button onclick="upload()">Upload to PACS</button>
+
+</div>
+
+</div>
+
+</div>
+
+<script>
+
+async function upload(){
+
+let file=document.getElementById("dicom").files[0]
+
+if(!file){
+alert("Please select a DICOM file")
+return
+}
+
+let formData=new FormData()
+formData.append("file",file)
+
+let res=await fetch("http://localhost:8002/upload",{
+method:"POST",
+body:formData
+})
+
+let result=await res.json()
+
+alert("Scan uploaded successfully to PACS")
+
+}
+
+</script>
+
+</body>
+</html>

@@ -211,7 +211,35 @@ services:
    restart: unless-stopped
    networks: [pacnet]
   
-  
+
+  scansure-postgres:
+    image: postgres:15
+    container_name: scansure-postgres
+    environment:
+      POSTGRES_DB: scansure
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5436:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks: [pacnet]
+
+  hospital-service:
+    build: ./services/hospital-service
+    ports:
+      - "8002:8001"
+    depends_on:
+      - scansure-postgres
+      - dcm4chee-arc
+    networks: [pacnet]
+
+  portal:
+    build: ./services/portal
+    ports:
+      - "8087:80"
+    networks: [pacnet]
+            
 volumes:
   #  pgdata:
    dicom_data:
