@@ -17,7 +17,7 @@ from kafka import KafkaProducer
 SUPABASE_URL = "https://eposvgsqtvwmqtlrwpuw.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg"
 
-WEBHOOK_URL = "https://webhook.site/5e1e0d02-7f15-4de2-85dd-7de809d3f7aa"
+WEBHOOK_URL = "https://webhook.site/ce92a4b1-df0b-40f2-9ea2-fc542aec95bc"
 
 # 🔥 Kafka Config (ASK YOUR FRIEND FOR THIS)
 KAFKA_BOOTSTRAP_SERVERS = "172.16.16.39:9092"
