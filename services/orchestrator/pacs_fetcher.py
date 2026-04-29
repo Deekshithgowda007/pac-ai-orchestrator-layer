@@ -14,11 +14,43 @@ QIDO_BASE = "http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs"
 
 KAFKA_BROKERS = "kafka:29092"
 TOPIC = "study.ingested"
+ORCHESTRATOR_API_URL = os.getenv("ORCHESTRATOR_API_URL", "http://orchestrator:8000/trigger-inference-pacs")
+ORCHESTRATOR_TRIGGER_TIMEOUT = int(os.getenv("ORCHESTRATOR_TRIGGER_TIMEOUT", "1800"))
+ENABLE_DIRECT_TRIGGER = os.getenv("ENABLE_DIRECT_TRIGGER", "false").lower() == "true"
 
 BASE_DICOM_DIR = "/data/dicom"
 SEEN_FILE = "/tmp/seen.json"
 
 os.makedirs(BASE_DICOM_DIR, exist_ok=True)
+
+
+def _first_value(dataset: dict, tag: str, default: str = "") -> str:
+    try:
+        values = dataset.get(tag, {}).get("Value", [])
+        if values:
+            return str(values[0] or "").strip()
+    except Exception:
+        pass
+    return default
+
+
+def _best_body_part(study_record: dict, series_record: dict | None = None) -> str:
+    candidates = [
+        _first_value(study_record, "00180015"),
+        _first_value(study_record, "00081030"),
+    ]
+    if series_record:
+        candidates.extend(
+            [
+                _first_value(series_record, "00180015"),
+                _first_value(series_record, "0008103E"),
+                _first_value(series_record, "00181030"),
+            ]
+        )
+    for candidate in candidates:
+        if candidate and candidate.upper() != "UNKNOWN":
+            return candidate
+    return "UNKNOWN"
 
 # -------------------------------------------------
 # WAIT FOR DCM4CHEE
@@ -66,6 +98,19 @@ if os.path.exists(SEEN_FILE):
     except Exception:
         seen = set()
 
+
+def trigger_orchestrator_direct(study_uid):
+    try:
+        response = requests.post(
+            ORCHESTRATOR_API_URL,
+            data={"study_uid": study_uid},
+            timeout=ORCHESTRATOR_TRIGGER_TIMEOUT,
+        )
+        response.raise_for_status()
+        print(f"Directly triggered orchestrator for {study_uid}", flush=True)
+    except Exception as exc:
+        print(f"Direct orchestrator trigger failed for {study_uid}: {exc}", flush=True)
+
 print("🟢 PACS fetcher running", flush=True)
 
 # =================================================
@@ -94,8 +139,8 @@ while True:
 
             print(f"📚 New study {study_uid}", flush=True)
 
-            modality = s.get("00080061", {}).get("Value", ["UNKNOWN"])[0]
-            body_part = s.get("00180015", {}).get("Value", ["UNKNOWN"])[0]
+            modality = _first_value(s, "00080061", "UNKNOWN")
+            body_part = _best_body_part(s)
 
             study_dir = f"{BASE_DICOM_DIR}/{study_uid}"
             os.makedirs(study_dir, exist_ok=True)
@@ -113,6 +158,8 @@ while True:
 
             for series in sr.json():
                 series_uid = series["0020000E"]["Value"][0]
+                if body_part == "UNKNOWN":
+                    body_part = _best_body_part(s, series)
 
                 # -------------------------------------------------
                 # GET INSTANCES
@@ -177,6 +224,8 @@ while True:
 
             producer.send(TOPIC, payload)
             producer.flush()
+            if ENABLE_DIRECT_TRIGGER:
+                trigger_orchestrator_direct(study_uid)
 
             seen.add(study_uid)
             json.dump(list(seen), open(SEEN_FILE, "w"))

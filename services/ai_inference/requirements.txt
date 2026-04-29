@@ -3,7 +3,9 @@ pydicom
 numpy<2
 requests
 Pillow
+python-dotenv
 transformers>=4.44.0
+huggingface_hub>=0.24.0
 torch==2.6.0+cpu
 torchvision==0.21.0+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
@@ -24,3 +26,19 @@ monai
 scipy
 opencv-python-headless
 kafka-python
+torchxrayvision
+nibabel
+TotalSegmentator
+acvl-utils>=0.2
+dynamic-network-architectures>=0.2
+dicom2nifti
+medpy
+batchgenerators>=0.25
+scikit-image
+pandas
+graphviz
+imagecodecs
+yacs
+connected-components-3d>=3.12.2
+albumentations
+shapely

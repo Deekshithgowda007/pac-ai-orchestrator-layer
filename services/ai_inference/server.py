@@ -1,355 +1,336 @@
-# services/ai_inference/server.py
-import os
 import io
-import time
-import uuid
-import threading
-import logging
-import traceback
 import json
-from typing import Any, Dict, List, Optional, Tuple
+import logging
+import os
+import shutil
+import tempfile
+import time
+import traceback
+import uuid
+from datetime import datetime
+from typing import Any, Dict, Optional
 
-from flask import Flask, request, jsonify
 import pydicom
-from PIL import Image
-import numpy as np
-import openai
-from transformers import pipeline as hf_pipeline
-import torch
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
-from supabase import create_client, Client
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from supabase import Client, create_client
 
-# ----------------- LOGGING -----------------
+from dicom.dicom_sender import send_sr_to_dcm4chee
+from dicom.sr_builder import build_ai_sr
+from inference_engine import InferenceEngine
+
+load_dotenv()
+
 log = logging.getLogger("ai_inference")
 logging.basicConfig(level=logging.INFO)
 
-# ----------------- CONFIG (hardcoded as requested) -----------------
-AI_WORKERS = 2
-HUGGINGFACE_TOKEN = "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"
-OPENAI_API_KEY = "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"
-OPENAI_MODEL = "gpt-4o"
-WORKER_TIMEOUT = 600
+AI_WORKERS = int(os.getenv("AI_WORKERS", "2"))
+USE_OPENAI = os.getenv("USE_OPENAI", "false").lower() == "true"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+RESULT_WEBHOOK_URL = os.getenv("RESULT_WEBHOOK_URL", "").strip()
+STORE_DICOM_SR = os.getenv("STORE_DICOM_SR", "true").lower() == "true"
 
-SUPABASE_URL = "https://eposvgsqtvwmqtlrwpuw.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg"
-
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
-
-# DEFAULT_ENGINES now holds lists (primary then fallback models) per modality
-DEFAULT_ENGINES: Dict[str, List[str]] = {
-    "CT": [
-        "nlpconnect/vit-gpt2-image-captioning",
-        "Salesforce/blip-image-captioning-large",
-        "Salesforce/blip-image-captioning-base"
-    ],
-    "MR": [
-        "nlpconnect/vit-gpt2-image-captioning",
-        "Salesforce/blip-image-captioning-large"
-    ],
-    "XRAY": [
-        "Salesforce/blip-image-captioning-large",
-        "Salesforce/blip-image-captioning-base"
-    ],
-    "PET": [
-        "nlpconnect/vit-gpt2-image-captioning",
-        "Salesforce/blip-image-captioning-large"
-    ],
-    "ULTRASOUND": [
-        "Salesforce/blip-image-captioning-base",
-        "nlpconnect/vit-gpt2-image-captioning"
-    ]
-}
-
-# ----------------- PROMETHEUS METRICS -----------------
 INFERENCE_REQUESTS = Counter("inference_requests_total", "Total inference requests")
 INFERENCE_ERRORS = Counter("inference_errors_total", "Total inference errors")
 INFERENCE_LATENCY = Histogram("inference_latency_seconds", "Latency for inference request")
 
-# ----------------- SUPABASE CLIENT -----------------
 supabase_client: Optional[Client] = None
-try:
-    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    log.info("✅ Connected to Supabase")
-except Exception as e:
-    log.error(f"❌ Failed to connect to Supabase: {e}")
+if USE_SUPABASE and SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        log.info("Supabase client initialized")
+    except Exception as exc:
+        log.warning("Supabase initialization failed: %s", exc)
 
-# ----------------- MODEL CACHE -----------------
-MODEL_CACHE: Dict[str, Any] = {}
-MODEL_LOCK = threading.Lock()
+engine = InferenceEngine()
+app = Flask(__name__)
+app.config["TRUSTED_HOSTS"] = ["*", "ai_inference", "ai_inference_backup", "localhost", "127.0.0.1"]
 
-def load_hf_pipeline(model_id: str):
-    """Load (and cache) HF image->text pipeline for a given model id."""
-    with MODEL_LOCK:
-        if model_id in MODEL_CACHE:
-            return MODEL_CACHE[model_id]
-        log.info("Loading HF pipeline: %s", model_id)
-        if HUGGINGFACE_TOKEN:
-            os.environ["HF_HUB_TOKEN"] = HUGGINGFACE_TOKEN
-        device = 0 if torch.cuda.is_available() else -1
-        # use "image-to-text" which works for modern image->text models
-        pipe = hf_pipeline("image-to-text", model=model_id, device=device)
-        MODEL_CACHE[model_id] = pipe
-        return pipe
-
-# ----------------- DICOM HELPERS -----------------
-def dicom_bytes_to_image(file_bytes: bytes) -> Image.Image:
-    bio = io.BytesIO(file_bytes)
-    ds = pydicom.dcmread(bio, force=True)
-    if not hasattr(ds, "PixelData"):
-        raise RuntimeError("No PixelData found in DICOM")
-    arr = ds.pixel_array
-    if arr.ndim == 3 and arr.shape[0] > 1:
-        arr = arr[arr.shape[0] // 2]
-    a = arr.astype("float32")
-    a -= a.min()
-    if a.max() > 0:
-        a = a / a.max()
-    img = (a * 255).astype("uint8")
-    if img.ndim == 2:
-        return Image.fromarray(img).convert("L").convert("RGB")
-    if img.ndim == 3 and img.shape[2] == 3:
-        return Image.fromarray(img).convert("RGB")
-    return Image.fromarray(img[..., 0]).convert("RGB")
 
 def extract_dicom_metadata(file_bytes: bytes) -> Dict[str, str]:
-    meta: Dict[str,str] = {}
-    try:
-        ds = pydicom.dcmread(io.BytesIO(file_bytes), stop_before_pixels=True, force=True)
-        standard_fields = [
-            "PatientID","PatientName","PatientSex","PatientAge","PatientBirthDate",
-            "Modality","BodyPartExamined","SeriesDescription","StudyDescription",
-            "StudyInstanceUID","SeriesInstanceUID","SOPInstanceUID",
-            "AccessionNumber","StudyDate","StudyTime","ReferringPhysicianName",
-            "InstitutionName","Manufacturer","ProtocolName"
-        ]
-        for f in standard_fields:
-            if hasattr(ds, f):
-                meta[f] = str(getattr(ds, f))
-        # also capture other keyworded tags
-        for elem in ds:
-            if elem.keyword and elem.keyword not in meta and elem.keyword != "PixelData":
-                try:
-                    meta[elem.keyword] = str(elem.value)
-                except Exception:
-                    meta[elem.keyword] = repr(elem.value)
-    except Exception as e:
-        log.warning("Metadata extraction failed: %s", e)
-    return meta
+    metadata: Dict[str, str] = {}
+    ds = pydicom.dcmread(io.BytesIO(file_bytes), stop_before_pixels=True, force=True)
+    for elem in ds:
+        if elem.keyword and elem.keyword != "PixelData":
+            try:
+                metadata[elem.keyword] = str(elem.value)
+            except Exception:
+                metadata[elem.keyword] = repr(elem.value)
+    return metadata
 
-# ----------------- CAPTIONING (multi-model fallback) -----------------
-def caption_with_fallback(model_list: List[str], pil_img: Image.Image, max_attempts: int = 3) -> Tuple[str, str]:
-    """
-    Try each model in model_list sequentially until a caption is produced.
-    Returns (used_model_id, caption_text).
-    """
-    last_exc = None
-    for model_id in model_list:
-        try:
-            pipe = load_hf_pipeline(model_id)
-            out = pipe(pil_img)
-            # output normalization
-            caption_text = None
-            if isinstance(out, list) and len(out) > 0:
-                first = out[0]
-                if isinstance(first, dict):
-                    caption_text = first.get("generated_text") or first.get("caption") or first.get("text")
-                else:
-                    caption_text = str(first)
-            else:
-                caption_text = str(out)
-            if caption_text:
-                caption_text = caption_text.strip()
-                log.info("Caption produced by %s: %s", model_id, caption_text[:120])
-                return model_id, caption_text
-        except Exception as e:
-            log.warning("Model %s failed for captioning: %s", model_id, e)
-            last_exc = e
-            continue
-    # if none succeeded, raise last exception or return an explicit error text
-    err_msg = f"No caption model produced output. Last error: {repr(last_exc)}"
-    log.error(err_msg)
-    return "none", err_msg
 
-# ----------------- GPT / SUMMARY (kept robust) -----------------
-def call_openai_for_json(captions: List[str], metadata: Dict[str,str], model_name: str) -> Optional[Dict[str,Any]]:
-    prompt = (
-        "You are a board-certified radiologist assistant. Produce STRICT JSON only (no prose outside JSON) "
-        "with keys: findings (array of 3-4 short bullet sentences, <=15 words each), "
-        "impression (4-5 line paragraph clinical summary and next steps), "
-        "probable_pathology (object with present:boolean, keywords:array, confidence:float 0-1).\n\n"
-        f"Modality: {metadata.get('Modality','UNKNOWN')}\nBody part: {metadata.get('BodyPartExamined','UNKNOWN')}\n"
-        f"PatientID: {metadata.get('PatientID','N/A')}\n\n"
-        "Engine captions:\n" + "\n".join(captions) + "\n\nReturn JSON only."
+def build_report(engine_result: Dict[str, Any], metadata: Dict[str, str]) -> Dict[str, Any]:
+    modality = metadata.get("Modality", "UNKNOWN")
+    body_part = (
+        metadata.get("BodyPartExamined")
+        or metadata.get("StudyDescription")
+        or metadata.get("SeriesDescription")
+        or "UNKNOWN"
     )
-    try:
-        resp = openai.ChatCompletion.create(
-            model=model_name,
-            messages=[{"role":"system","content":"You are a helpful, precise radiology assistant."},
-                      {"role":"user","content":prompt}],
-            max_tokens=700,
-            temperature=0.0
-        )
-        text = resp.choices[0].message["content"].strip()
-        try:
-            return json.loads(text)
-        except Exception:
-            # try extract JSON block
-            s = text.find("{"); e = text.rfind("}")
-            if s != -1 and e != -1 and e > s:
-                frag = text[s:e+1]
-                try:
-                    return json.loads(frag)
-                except Exception:
-                    log.debug("OpenAI returned non-JSON text that couldn't be parsed.")
-                    return None
-    except Exception as e:
-        log.error("OpenAI call failed: %s", e)
-    return None
+    abnormal_value = engine_result.get("abnormal")
+    if abnormal_value is None:
+        abnormal = None
+    else:
+        abnormal = bool(abnormal_value)
 
-def build_structured_report(captions: List[str], metadata: Dict[str,str]) -> Dict[str,Any]:
-    # try openai strict json across a few models
-    models_to_try = [OPENAI_MODEL, "gpt-4", "gpt-4o-mini", "gpt-4o"]
-    for m in models_to_try:
-        parsed = call_openai_for_json(captions, metadata, m)
-        if parsed and isinstance(parsed, dict):
-            findings = parsed.get("findings", parsed.get("Findings", []))
-            impression = parsed.get("impression", parsed.get("Impression", parsed.get("summary", "")))
-            probable = parsed.get("probable_pathology", parsed.get("probable_fracture", {}))
-            return {"findings": findings, "impression": impression, "probable_pathology": probable}
-    # fallback: plain-text impression in 4-5 lines
-    try:
-        prompt = (
-            f"You are an expert radiologist. Based on captions below, write a clear 4-5 line professional impression.\n"
-            f"Modality: {metadata.get('Modality','UNKNOWN')}, Body part: {metadata.get('BodyPartExamined','UNKNOWN')}\n\n"
-            "Captions:\n" + "\n".join(captions)
-        )
-        resp = openai.ChatCompletion.create(
-            model=OPENAI_MODEL,
-            messages=[{"role":"system","content":"You are a radiology expert."}, {"role":"user","content":prompt}],
-            temperature=0.15,
-            max_tokens=250
-        )
-        text = resp.choices[0].message["content"].strip()
-        findings = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if len(findings) < 4 and len(line.split()) <= 15:
-                findings.append(line)
-        if not findings:
-            findings = [s.strip() for s in text.split(".") if s][:3]
-        return {"findings": findings[:4], "impression": text, "probable_pathology": {"present": False, "keywords": [], "confidence": 0.0}}
-    except Exception as e:
-        log.error("Fallback OpenAI plain-text failed: %s", e)
-        return {"findings": captions[:3], "impression": "Summary generation failed.", "probable_pathology": {"present": False, "keywords": [], "confidence": 0.0}}
+    confidence_value = engine_result.get("confidence")
+    if confidence_value is None:
+        confidence = None
+    else:
+        confidence = float(confidence_value)
+    region = engine_result.get("region", "diffuse/undetermined")
+    observations = engine_result.get("observations", [])
+    analysis_type = engine_result.get("analysis_type", "preliminary-rule-based")
+    explicit_status = engine_result.get("analysis_status")
 
-# ----------------- SUPABASE WRAPPER -----------------
-def safe_insert_supabase(table: str, row: Dict[str,Any]) -> Optional[Any]:
+    if explicit_status:
+        status = explicit_status
+    elif analysis_type == "insufficient-series":
+        status = "non-diagnostic-insufficient-series"
+    else:
+        if abnormal is None:
+            status = "non-diagnostic"
+        else:
+            status = "abnormal" if abnormal else "no-dominant-abnormality-detected"
+
+    abnormalities = engine_result.get("abnormalities") or (observations[-2:] if abnormal else [])
+    conclusion = engine_result.get("finding", "No automated conclusion available.")
+    impact = engine_result.get("impact", "No impact assessment available.")
+    if engine_result.get("recommendation"):
+        recommendation = engine_result["recommendation"]
+    elif analysis_type == "unsupported-modality":
+        recommendation = "Route to radiologist/manual review."
+    elif analysis_type == "insufficient-series":
+        recommendation = (
+            f"Upload the complete {modality} DICOM series or full study before attempting automated "
+            "volume analysis, then send the case for radiologist review."
+        )
+    else:
+        recommendation = (
+            "Escalate for prompt radiologist review and correlate clinically."
+            if abnormal else
+            "Proceed with standard radiologist review and correlate with symptoms."
+        )
+
+    return {
+        "analysis_type": analysis_type,
+        "model_name": engine_result.get("model_name", "unknown"),
+        "diagnostic_support": engine_result.get("diagnostic_support", "not-supported"),
+        "diagnostic_available": engine_result.get("support_matrix", {}).get("diagnostic_available", False),
+        "report_type": engine_result.get("report_type", "non-diagnostic"),
+        "modality": modality,
+        "body_part": body_part,
+        "anatomy_involved": engine_result.get("anatomy_involved", body_part),
+        "abnormality_status": status,
+        "confidence": confidence,
+        "region_of_interest": region,
+        "observations": observations,
+        "abnormalities": abnormalities,
+        "impact": impact,
+        "conclusion": conclusion,
+        "recommendation": recommendation,
+        "limitations": engine_result.get("limitations", []),
+        "metrics": engine_result.get("metrics", {}),
+        "routing_decision": engine_result.get("routing_decision", {}),
+        "support_matrix": engine_result.get("support_matrix", {}),
+        "model_registry": engine_result.get("support_matrix", {}),
+        "metadata_summary": {
+            "study_uid": metadata.get("StudyInstanceUID"),
+            "series_uid": metadata.get("SeriesInstanceUID"),
+            "sop_uid": metadata.get("SOPInstanceUID"),
+            "series_description": metadata.get("SeriesDescription"),
+            "study_description": metadata.get("StudyDescription"),
+            "study_date": metadata.get("StudyDate"),
+        },
+    }
+
+
+def refine_report_with_openai(report: Dict[str, Any], metadata: Dict[str, str]) -> Dict[str, Any]:
+    return report
+
+
+def build_summary(report: Dict[str, Any]) -> str:
+    observations = report.get("observations") or []
+    abnormalities = report.get("abnormalities") or []
+    summary_lines = [
+        f"Modality: {report.get('modality', 'UNKNOWN')}",
+        f"Body part: {report.get('body_part', 'UNKNOWN')}",
+        f"Analysis type: {report.get('analysis_type', 'unknown')}",
+        f"Status: {report.get('abnormality_status', 'unknown')}",
+        f"Region: {report.get('region_of_interest', 'diffuse/undetermined')}",
+    ]
+    if observations:
+        summary_lines.append(f"Observation: {observations[0]}")
+    if len(observations) > 1:
+        summary_lines.append(f"Finding detail: {observations[1]}")
+    if abnormalities:
+        summary_lines.append(f"Abnormalities: {', '.join(str(item) for item in abnormalities)}")
+    summary_lines.append(f"Impact: {report.get('impact', 'No impact assessment available.')}")
+    summary_lines.append(f"Conclusion: {report.get('conclusion', 'No automated conclusion available.')}")
+    summary_lines.append(f"Recommendation: {report.get('recommendation', 'No recommendation available.')}")
+    return "\n".join(summary_lines)
+
+
+def safe_insert_supabase(table: str, row: Dict[str, Any]) -> None:
     if not supabase_client:
-        log.warning("Supabase client not initialized — skipping logging.")
-        return None
+        return
     try:
-        row_copy = json.loads(json.dumps(row, default=str))
-        # ensure ai_model_id (UUID) remains null to avoid uuid parse errors
-        if "ai_model_id" in row_copy:
-            row_copy["ai_model_id"] = None
-        res = supabase_client.table(table).insert(row_copy).execute()
-        return getattr(res, "data", None)
-    except Exception as e:
-        log.error("Supabase insert error: %s", e)
-        return None
+        supabase_client.table(table).insert(json.loads(json.dumps(row, default=str))).execute()
+    except Exception as exc:
+        log.warning("Supabase insert into %s failed: %s", table, exc)
 
-# ----------------- FLASK APP -----------------
-app = Flask(__name__)
+
+def send_webhook(payload: Dict[str, Any]) -> None:
+    if not RESULT_WEBHOOK_URL:
+        log.info("Webhook skipped because RESULT_WEBHOOK_URL is empty")
+        return
+    try:
+        import requests
+
+        resp = requests.post(RESULT_WEBHOOK_URL, json=payload, timeout=30)
+        log.info("Webhook delivered to %s with status %s", RESULT_WEBHOOK_URL, resp.status_code)
+    except Exception as exc:
+        log.warning("Webhook delivery failed: %s", exc)
+
+
+def store_structured_report(study_uid: Optional[str], metadata: Dict[str, str], summary: str, report: Dict[str, Any]) -> None:
+    if not STORE_DICOM_SR or not study_uid:
+        return
+    try:
+        sr_text = json.dumps(
+            {
+                "summary": summary,
+                "conclusion": report.get("conclusion"),
+                "impact": report.get("impact"),
+                "recommendation": report.get("recommendation"),
+            },
+            default=str,
+        )
+        sr = build_ai_sr(
+            study_uid=study_uid,
+            patient_id=metadata.get("PatientID", "UNKNOWN"),
+            patient_name=metadata.get("PatientName", "ANONYMOUS"),
+            result_text=sr_text,
+        )
+        send_sr_to_dcm4chee(sr)
+    except Exception as exc:
+        log.warning("DICOM SR store failed: %s", exc)
+
 
 @app.route("/metrics")
 def metrics():
     return generate_latest(), 200, {"Content-Type": CONTENT_TYPE_LATEST}
 
+
 @app.route("/upload", methods=["POST"])
 def upload():
     start_time = time.time()
     INFERENCE_REQUESTS.inc()
+    temp_path: Optional[str] = None
     try:
-        f = request.files.get("file")
-        if not f:
-            return jsonify({"ok": False, "error": "No file provided"}), 400
-        b = f.read()
+        raw_body = request.get_data(cache=True)
+        uploaded_files = request.files.getlist("files") or request.files.getlist("file")
+        input_instance_count = 1
+        if uploaded_files:
+            temp_path = tempfile.mkdtemp(prefix="dicom-series-")
+            first_file_bytes: Optional[bytes] = None
+            input_instance_count = 0
+            for index, uploaded_file in enumerate(uploaded_files):
+                file_bytes = uploaded_file.read()
+                if not file_bytes:
+                    continue
+                input_instance_count += 1
+                if first_file_bytes is None:
+                    first_file_bytes = file_bytes
+                filename = uploaded_file.filename or f"instance-{index:04d}.dcm"
+                if not filename.lower().endswith(".dcm"):
+                    filename = f"{filename}.dcm"
+                with open(os.path.join(temp_path, filename), "wb") as handle:
+                    handle.write(file_bytes)
+            if not first_file_bytes or input_instance_count == 0:
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "No DICOM payload provided",
+                        "content_type": request.content_type,
+                        "form_keys": list(request.form.keys()),
+                        "file_keys": list(request.files.keys()),
+                    }
+                ), 400
+            metadata = extract_dicom_metadata(first_file_bytes)
+        else:
+            file_bytes = raw_body
+            if not file_bytes:
+                return jsonify(
+                    {
+                        "ok": False,
+                        "error": "No DICOM payload provided",
+                        "content_type": request.content_type,
+                        "form_keys": list(request.form.keys()),
+                        "file_keys": list(request.files.keys()),
+                    }
+                ), 400
+            metadata = extract_dicom_metadata(file_bytes)
 
-        metadata = extract_dicom_metadata(b)
-        modality = metadata.get("Modality", "CT")
-        body_part = metadata.get("BodyPartExamined", "UNKNOWN")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".dcm") as handle:
+                handle.write(file_bytes)
+                temp_path = handle.name
 
-        # pick list of caption models for modality
-        model_candidates = DEFAULT_ENGINES.get(modality.upper(), DEFAULT_ENGINES["CT"])
+        engine_result = engine.run(temp_path)
+        report = build_report(engine_result, metadata)
+        report = refine_report_with_openai(report, metadata)
+        summary = build_summary(report)
 
-        # generate caption using fallback chain
-        captions: List[str] = []
-        model_used = "none"
-        try:
-            pil = dicom_bytes_to_image(b)
-            model_used, caption = caption_with_fallback(model_candidates, pil)
-            captions.append(caption)
-        except Exception as e:
-            INFERENCE_ERRORS.inc()
-            log.error("Caption generation pipeline failed: %s", e)
-            captions.append(f"[ERROR] {e}")
-
-        # structured report
-        report = build_structured_report(captions, metadata)
-        impression = report.get("impression") or "Summary generation failed."
-
-        # build payload (avoid ai_model_id uuid insertion)
-        payload = {
-            "id": uuid.uuid4(),
-            "ai_model_id": None,
-            "model_id": model_used,
-            "modality": modality,
-            "body_part": body_part,
-            "patient_id": metadata.get("PatientID"),
-            "patient_name": metadata.get("PatientName"),
-            "patient_sex": metadata.get("PatientSex"),
-            "patient_age": metadata.get("PatientAge"),
-            "study_instance_uid": metadata.get("StudyInstanceUID"),
-            "series_instance_uid": metadata.get("SeriesInstanceUID"),
-            "study_description": metadata.get("StudyDescription"),
-            "series_description": metadata.get("SeriesDescription"),
-            "accession_number": metadata.get("AccessionNumber"),
-            "study_date": metadata.get("StudyDate"),
-            "study_time": metadata.get("StudyTime"),
-            "referring_physician_name": metadata.get("ReferringPhysicianName"),
-            "captions": captions,
+        response_payload = {
+            "ok": True,
+            "id": str(uuid.uuid4()),
+            "model_id": report["model_name"],
+            "engine_instance": os.getenv("ENGINE_INSTANCE_NAME", "primary"),
+            "dicom_metadata": metadata,
             "report": report,
-            "summary": impression,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            "summary": summary,
+            "modality": report["modality"],
+            "body_part": report["body_part"],
+            "input_instance_count": input_instance_count,
+            "latency_sec": round(time.time() - start_time, 2),
         }
 
-        sup_res = safe_insert_supabase("inference_logs", payload)
-        if sup_res is None:
-            log.warning("Supabase insert returned no data (check key/permissions).")
-
+        safe_insert_supabase(
+            "dicom_reports",
+            {
+                "model_id": report["model_name"],
+                "modality": report["modality"],
+                "body_part": report["body_part"],
+                "summary": summary,
+                "captions": [],
+                "dicom_metadata": metadata,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        )
+        store_structured_report(metadata.get("StudyInstanceUID"), metadata, summary, report)
         INFERENCE_LATENCY.observe(time.time() - start_time)
-        return jsonify({
-            "ok": True,
-            "model_id": model_used,
-            "dicom_metadata": metadata,
-            "captions": captions,
-            "report": report,
-            "summary": impression,
-            "modality": modality,
-            "body_part": body_part,
-            "latency_sec": round(time.time() - start_time, 2)
-        })
-    except Exception as e:
+        return jsonify(response_payload)
+    except Exception as exc:
         INFERENCE_ERRORS.inc()
-        log.exception("Upload error: %s", e)
-        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
+        log.exception("Upload error: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "trace": traceback.format_exc()}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            if os.path.isdir(temp_path):
+                shutil.rmtree(temp_path, ignore_errors=True)
+            else:
+                os.unlink(temp_path)
+
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"ok": True, "workers": AI_WORKERS})
+    return jsonify({"ok": True, "workers": AI_WORKERS, "supabase_enabled": bool(supabase_client)})
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8001, threaded=True)

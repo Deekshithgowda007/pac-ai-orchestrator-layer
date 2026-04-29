@@ -1,0 +1,14 @@
+flask
+python-dotenv
+pydicom
+nibabel==5.0.1
+numpy==1.23.5
+scipy==1.4.1
+pandas
+Pillow
+matplotlib==3.6.2
+PyYAML==6.0
+protobuf==3.20.3
+h5py==2.10.0
+tensorflow==2.2.0
+Keras==2.3.1

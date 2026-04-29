@@ -4,36 +4,99 @@ services:
 
   ai_inference:
     build: ./services/ai_inference
+    env_file:
+      - ./.env
     environment:
+      USE_SUPABASE: "false"
+      USE_OPENAI: "false"
+      ENGINE_INSTANCE_NAME: primary
       DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
-      OPENAI_API_KEY: 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
-      HF_API_KEY: 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
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      HF_API_KEY: ${HF_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+      RESULT_WEBHOOK_URL: ${RESULT_WEBHOOK_URL:-}
+      ENABLE_STENUNET_XA: ${ENABLE_STENUNET_XA:-true}
+      STENUNET_REPO_PATH: /opt/external/StenUNet
+      STENUNET_CHECKPOINT_PATH: /opt/model_weights/stenunet_shared_weights.pth
+      CT_MONAI_CHECKPOINT_PATH: ${CT_MONAI_CHECKPOINT_PATH:-}
+      MR_MONAI_CHECKPOINT_PATH: ${MR_MONAI_CHECKPOINT_PATH:-}
+      ENABLE_GPU_INFERENCE: ${ENABLE_GPU_INFERENCE:-true}
+      SYNTHSEG_URL: http://synthseg_inference:8001
+      TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
       AI_WORKERS: 2
     volumes:
     - dicom_data:/data/dicom
+    - ./.external/monai_bundles:/opt/external/monai_bundles:ro
+    - ./.external/StenUNet:/opt/external/StenUNet:ro
+    - ./.model_weights:/opt/model_weights
+    - ./.model_cache:/opt/model_cache
     ports:
       - "8001:8001"
     networks: [pacnet]
-    
+
+  ai_inference_backup:
+    build: ./services/ai_inference
+    env_file:
+      - ./.env
+    environment:
+      USE_SUPABASE: "false"
+      USE_OPENAI: "false"
+      ENGINE_INSTANCE_NAME: backup
+      DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      HF_API_KEY: ${HF_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+      RESULT_WEBHOOK_URL: ${RESULT_WEBHOOK_URL:-}
+      ENABLE_STENUNET_XA: ${ENABLE_STENUNET_XA:-true}
+      STENUNET_REPO_PATH: /opt/external/StenUNet
+      STENUNET_CHECKPOINT_PATH: /opt/model_weights/stenunet_shared_weights.pth
+      CT_MONAI_CHECKPOINT_PATH: ${CT_MONAI_CHECKPOINT_PATH:-}
+      MR_MONAI_CHECKPOINT_PATH: ${MR_MONAI_CHECKPOINT_PATH:-}
+      ENABLE_GPU_INFERENCE: ${ENABLE_GPU_INFERENCE:-true}
+      SYNTHSEG_URL: http://synthseg_inference:8001
+      TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+      AI_WORKERS: 2
+    volumes:
+    - dicom_data:/data/dicom
+    - ./.external/monai_bundles:/opt/external/monai_bundles:ro
+    - ./.external/StenUNet:/opt/external/StenUNet:ro
+    - ./.model_weights:/opt/model_weights
+    - ./.model_cache:/opt/model_cache
+    networks: [pacnet]
 
   orchestrator:
     build: ./services/orchestrator
+    env_file:
+      - ./.env
     environment:
+      USE_SUPABASE: "false"
+      USE_OPENAI: "false"
       AI_HOST: ai_inference
       AI_PORT: 8001
-      SUPABASE_URL: https://eposvgsqtvwmqtlrwpuw.supabase.co
-      SUPABASE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+      AI_ENGINE_ENDPOINTS: ai_inference:8001,ai_inference_backup:8001
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
       PACS_QIDO_URL: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
-      PACS_WADO_URL: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/wado
+      PACS_WADO_URL: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
       PACS_STOW_URL: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
       ENGINE_INSTANCES_CONFIG: default_engine:ai_inference:8001
       AI_FALLBACK_ENGINES: default_engine
-      OPENAI_API_KEY: sk-proj-ePv7w7mG5ObqjrY...
-      OPENAI_MODEL: gpt-4o
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      RESULT_WEBHOOK_URL: ${RESULT_WEBHOOK_URL:-}
+      HOSPITAL_RESULT_URL: ${HOSPITAL_RESULT_URL:-http://hospital-service:8001/results}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-172.16.16.39:9092}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-ai.results}
     ports:
       - "8010:8000"
     depends_on:
       - ai_inference
+      - ai_inference_backup
+      - synthseg_inference
       - dcm4chee-arc
       - prometheus
     networks: [pacnet]
@@ -46,6 +109,11 @@ services:
       POSTGRES_DB: pacsdb
       POSTGRES_USER: pacs
       POSTGRES_PASSWORD: pacs
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pacs -d pacsdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     networks: [pacnet]
 
   ldap:
@@ -72,8 +140,11 @@ services:
       LDAP_ROOTPASS: secret
       WILDFLY_CHOWN: /opt/wildfly/standalone
     depends_on:
-      - postgres
-      - ldap
+      postgres:
+        condition: service_healthy
+      ldap:
+        condition: service_started
+    restart: unless-stopped
     networks: [pacnet]
 
   ohif:
@@ -145,7 +216,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./services/prometheus/Prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./services/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks: [pacnet]
 
   grafana:
@@ -153,7 +224,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "3002:3000"
     volumes:
       - ./services/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./services/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -187,11 +258,14 @@ services:
     kafka:
       condition: service_healthy
    environment:
+    USE_SUPABASE: "false"
     KAFKA_BROKERS: kafka:29092
     KAFKA_TOPIC: study.ingested
     KAFKA_GROUP: orchestrator-router-v3
-    SUPABASE_URL: https://eposvgsqtvwmqtlrwpuw.supabase.co
-    SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
+    SUPABASE_URL: ${SUPABASE_URL}
+    SUPABASE_SERVICE_KEY: ${SUPABASE_KEY}
+    ORCHESTRATOR_API_URL: http://orchestrator:8000/trigger-inference-pacs
+    DEFAULT_MODEL_ID: default_engine
    networks: [pacnet]
 
   ai_worker:
@@ -199,17 +273,34 @@ services:
     context: ./services/ai_inference
     dockerfile: Dockerfile
    container_name: ai_worker
+   command: ["python", "-u", "ai_worker.py"]
    depends_on:
     - dcm4chee-arc
    environment:
-    SUPABASE_URL: https://eposvgsqtvwmqtlrwpuw.supabase.co
-    SUPABASE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg
+    USE_SUPABASE: "false"
+    SUPABASE_URL: ${SUPABASE_URL}
+    SUPABASE_KEY: ${SUPABASE_KEY}
+    RESULT_WEBHOOK_URL: ${RESULT_WEBHOOK_URL}
+    KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-172.16.16.39:9092}
+    KAFKA_TOPIC: ${KAFKA_TOPIC:-ai.results}
     DCM4CHEE_WADO: http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs
     DCM4CHEE_BASE_URL: http://dcm4chee-arc:8080/dcm4chee-arc
    volumes:
     - dicom_data:/data/dicom
    restart: unless-stopped
    networks: [pacnet]
+
+  synthseg_inference:
+    build: ./services/synthseg_inference
+    environment:
+      SYNTHSEG_HOME: /opt/external/SynthSeg
+      SYNTHSEG_MODEL_VERSION: v1
+      SYNTHSEG_THREADS: ${SYNTHSEG_THREADS:-1}
+      SYNTHSEG_MAX_INPLANE: ${SYNTHSEG_MAX_INPLANE:-128}
+      SYNTHSEG_MAX_VOXELS: ${SYNTHSEG_MAX_VOXELS:-1500000}
+    volumes:
+      - ./.external/SynthSeg:/opt/external/SynthSeg:ro
+    networks: [pacnet]
   
 
   scansure-postgres:
@@ -247,3 +338,5 @@ volumes:
 networks:
     pacnet:
      driver: bridge
+
+

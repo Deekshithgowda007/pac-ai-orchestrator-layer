@@ -1,0 +1,27 @@
+# Secrets and local config
+.env
+.env.*
+
+# Python cache / virtualenv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Large model assets and caches
+.external/
+.model_weights/
+.model_cache/
+
+# Runtime / local data
+*.log
+tmp/
+temp/

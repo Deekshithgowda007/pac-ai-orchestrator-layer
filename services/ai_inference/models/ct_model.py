@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from monai.networks.nets import DenseNet121
 from monai.transforms import Resize
-from monai.data import MetaTensor
 
 from models.base_model import BaseModel
 
@@ -14,9 +13,9 @@ class CTVolumeModel(BaseModel):
     CPU compatible
     """
 
-    def __init__(self):
-
-        self.device = torch.device("cpu")
+    def __init__(self, weights_path: str | None = None, device: str | None = None):
+        resolved_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(resolved_device)
 
         # 3D DenseNet
         self.model = DenseNet121(
@@ -24,6 +23,32 @@ class CTVolumeModel(BaseModel):
             in_channels=1,
             out_channels=2  # binary classification (normal / abnormal)
         ).to(self.device)
+
+        if weights_path:
+            checkpoint = torch.load(weights_path, map_location=self.device)
+            if isinstance(checkpoint, dict):
+                state_dict = (
+                    checkpoint.get("state_dict")
+                    or checkpoint.get("model_state_dict")
+                    or checkpoint.get("network_weights")
+                    or checkpoint
+                )
+            else:
+                state_dict = checkpoint
+            model_state = self.model.state_dict()
+            cleaned = {}
+            for key, value in state_dict.items():
+                resolved_key = key[7:] if isinstance(key, str) and key.startswith("module.") else key
+                if resolved_key in model_state and tuple(model_state[resolved_key].shape) == tuple(value.shape):
+                    cleaned[resolved_key] = value
+
+            if not cleaned or (len(cleaned) / max(len(model_state), 1)) < 0.5:
+                raise RuntimeError(
+                    "Checkpoint is not compatible with the temporary CT DenseNet wrapper. "
+                    "This MONAI bundle requires a bundle-specific adapter."
+                )
+
+            self.model.load_state_dict(cleaned, strict=False)
 
         self.model.eval()
 

@@ -1,93 +1,135 @@
 import json
-import time
 import os
+import time
 import traceback
 from datetime import datetime
+from typing import List, Optional
 
+import requests
 from kafka import KafkaConsumer
 from supabase import create_client
 
 # --------------------
-# Config (ENV FIRST)
+# Config
 # --------------------
-KAFKA_BROKERS = "kafka:29092"
-KAFKA_TOPIC = "study.ingested"
-KAFKA_GROUP = "orchestrator-router-v4"
+KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "study.ingested")
+KAFKA_GROUP = os.getenv("KAFKA_GROUP", "orchestrator-router-v4")
 
-SUPABASE_URL = "https://eposvgsqtvwmqtlrwpuw.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwb3N2Z3NxdHZ3bXF0bHJ3cHV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI0NjgwNzgsImV4cCI6MjA2ODA0NDA3OH0.pdHXlAJFjcE1n4HoFSVWWOBG1Yhmqr_jXW0wqSdyhXg"
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = (
+    os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+    or os.getenv("SUPABASE_KEY", "").strip()
+)
+USE_SUPABASE = os.getenv("USE_SUPABASE", "false").lower() == "true"
+ORCHESTRATOR_API_URL = os.getenv(
+    "ORCHESTRATOR_API_URL",
+    "http://orchestrator:8000/trigger-inference-pacs",
+).strip()
+DEFAULT_MODEL_ID = os.getenv("DEFAULT_MODEL_ID", "default_engine")
+ORCHESTRATOR_TRIGGER_TIMEOUT = int(os.getenv("ORCHESTRATOR_TRIGGER_TIMEOUT", "1800"))
 
-print("🚀 Kafka → Supabase Router starting", flush=True)
+print("Kafka router starting", flush=True)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-print("✅ Supabase connected", flush=True)
+supabase = None
+if USE_SUPABASE and SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("Supabase connected", flush=True)
+    except Exception as exc:
+        supabase = None
+        print(f"Supabase unavailable, using direct orchestrator routing: {exc}", flush=True)
+else:
+    print("Supabase disabled, using direct orchestrator routing", flush=True)
 
 consumer = KafkaConsumer(
     KAFKA_TOPIC,
     bootstrap_servers=KAFKA_BROKERS,
     group_id=KAFKA_GROUP,
     auto_offset_reset="earliest",
-    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+    value_deserializer=lambda raw: json.loads(raw.decode("utf-8")),
     enable_auto_commit=True,
 )
 
-print("🟢 Kafka subscribed", flush=True)
+print("Kafka subscribed", flush=True)
 
 
-# --------------------
-# MODEL RESOLUTION
-# --------------------
-def resolve_models(modality: str, body_part: str):
-    res = (
-        supabase
-        .table("routing_rules")
-        .select("ai_model_id")
-        .eq("modality", modality)
-        .eq("body_part", body_part)
-        .eq("active", True)
-        .execute()
-    )
+def resolve_models(modality: str, body_part: str) -> List[str]:
+    if not supabase:
+        return [DEFAULT_MODEL_ID]
 
-    return list({r["ai_model_id"] for r in (res.data or [])})
+    try:
+        exact = (
+            supabase.table("routing_rules")
+            .select("ai_model_id")
+            .eq("modality", modality)
+            .eq("body_part", body_part)
+            .execute()
+        )
+        exact_ids = list({row["ai_model_id"] for row in (exact.data or []) if row.get("ai_model_id")})
+        if exact_ids:
+            return exact_ids
+
+        fallback = (
+            supabase.table("routing_rules")
+            .select("ai_model_id")
+            .eq("modality", modality)
+            .execute()
+        )
+        fallback_ids = list({row["ai_model_id"] for row in (fallback.data or []) if row.get("ai_model_id")})
+        return fallback_ids or [DEFAULT_MODEL_ID]
+    except Exception as exc:
+        print(f"Routing rule lookup failed, using default route: {exc}", flush=True)
+        return [DEFAULT_MODEL_ID]
 
 
-# --------------------
-# MAIN LOOP
-# --------------------
+def queue_job_in_supabase(job: dict) -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("inference_queue").insert(job).execute()
+        return True
+    except Exception as exc:
+        print(f"Supabase insert failed, falling back to direct trigger: {exc}", flush=True)
+        return False
+
+
+def trigger_orchestrator(study_uid: str, series_uid: Optional[str] = None) -> None:
+    payload = {"study_uid": study_uid}
+    if series_uid:
+        payload["series_uid"] = series_uid
+    response = requests.post(ORCHESTRATOR_API_URL, data=payload, timeout=ORCHESTRATOR_TRIGGER_TIMEOUT)
+    response.raise_for_status()
+    print(f"Triggered orchestrator for study {study_uid}", flush=True)
+
+
 while True:
     try:
         records = consumer.poll(timeout_ms=5000)
-
         if not records:
-            print("⏳ Kafka heartbeat", flush=True)
+            print("Kafka heartbeat", flush=True)
             continue
 
-        for _, msgs in records.items():
-            for msg in msgs:
+        for _, messages in records.items():
+            for message in messages:
                 try:
-                    s = msg.value
+                    event = message.value
+                    study_uid = event.get("study_uid")
+                    dicom_path = event.get("dicom_path")
+                    modality = event.get("modality") or "UNKNOWN"
+                    body_part = event.get("body_part") or "UNKNOWN"
 
-                    study_uid  = s.get("study_uid")
-                    dicom_path = s.get("dicom_path")
-
-                    # Normalize metadata (VERY IMPORTANT)
-                    modality  = s.get("modality") or "UNKNOWN"
-                    body_part = s.get("body_part") or "UNKNOWN"
-
-                    if not study_uid or not dicom_path:
-                        print("⚠️ Invalid payload (missing study_uid or dicom_path)", flush=True)
+                    if not study_uid:
+                        print("Invalid payload: missing study_uid", flush=True)
                         continue
 
                     print(
-                        f"📥 Received study={study_uid} modality={modality} body_part={body_part}",
-                        flush=True
+                        f"Received study={study_uid} modality={modality} body_part={body_part}",
+                        flush=True,
                     )
 
                     model_ids = resolve_models(modality, body_part)
-
-                    if not model_ids:
-                        print("⚠️ No routing rules matched", flush=True)
-                        continue
+                    queued_any = False
 
                     for model_id in model_ids:
                         job = {
@@ -101,19 +143,18 @@ while True:
                             "retry_count": 0,
                             "created_at": datetime.utcnow().isoformat(),
                         }
+                        if queue_job_in_supabase(job):
+                            queued_any = True
+                            print(f"Queued job for model={model_id}", flush=True)
 
-                        try:
-                            supabase.table("inference_queue").insert(job).execute()
-                            print(f"📤 Job queued → model={model_id}", flush=True)
-                        except Exception as db_err:
-                            print("❌ Supabase insert failed", flush=True)
-                            print(db_err, flush=True)
+                    if not queued_any:
+                        trigger_orchestrator(study_uid)
 
                 except Exception:
-                    print("❌ Error processing Kafka message", flush=True)
+                    print("Error processing Kafka message", flush=True)
                     traceback.print_exc()
 
     except Exception:
-        print("❌ Kafka consumer error", flush=True)
+        print("Kafka consumer error", flush=True)
         traceback.print_exc()
         time.sleep(5)
