@@ -302,14 +302,7 @@ def send_to_elk(payload: Dict[str, Any]) -> None:
 
 
 def send_to_webhook(payload: Dict[str, Any]) -> None:
-    if not RESULT_WEBHOOK_URL:
-        print("Webhook skipped because RESULT_WEBHOOK_URL is empty", flush=True)
-        return
-    try:
-        response = requests.post(RESULT_WEBHOOK_URL, json=payload, timeout=30)
-        print(f"Webhook delivered to {RESULT_WEBHOOK_URL} with status {response.status_code}", flush=True)
-    except Exception as exc:
-        print(f"Webhook delivery failed: {exc}", flush=True)
+    print("Webhook delivery disabled; skipping webhook send", flush=True)
 
 
 def send_to_kafka(payload: Dict[str, Any]) -> None:

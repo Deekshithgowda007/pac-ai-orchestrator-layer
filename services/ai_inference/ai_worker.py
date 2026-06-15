@@ -259,6 +259,8 @@ def encode_dicom_base64(dicom_path):
 # Send Webhook
 # ------------------------------------------------
 def send_to_webhook(payload):
+    print("Webhook delivery disabled; skipping webhook send")
+    return
     debug_resolve("Webhook", WEBHOOK_URL)
     try:
         response = requests.post(WEBHOOK_URL, json=payload, timeout=60)
