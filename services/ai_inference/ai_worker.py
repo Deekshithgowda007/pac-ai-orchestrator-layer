@@ -31,6 +31,7 @@ POLL_INTERVAL = 5
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if USE_SUPABASE and SUPABASE_URL and SUPABASE_KEY else None
 engine = InferenceEngine()
+producer = None
 
 
 def extract_host(target):
@@ -76,8 +77,6 @@ def create_kafka_producer():
             print("⏳ Waiting for Kafka broker...", str(e))
             time.sleep(5)
             
-producer = create_kafka_producer()
-
 print(f"🤖 AI Worker started ({WORKER_ID})")
 if USE_SUPABASE:
     debug_resolve("Supabase", SUPABASE_URL)
@@ -273,6 +272,9 @@ def send_to_webhook(payload):
 # 🔥 Send to Kafka
 # ------------------------------------------------
 def send_to_kafka(payload):
+    global producer
+    if producer is None:
+        producer = create_kafka_producer()
     try:
         future = producer.send(KAFKA_TOPIC, value=payload)
         result = future.get(timeout=10)

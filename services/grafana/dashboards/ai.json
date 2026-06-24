@@ -83,6 +83,56 @@
         }
       ],
       "gridPos": { "x": 6, "y": 19, "w": 6, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Chain Selection by Route",
+      "targets": [
+        {
+          "expr": "sum by (route_name, decision) (increase(orchestrator_chain_selection_total[15m]))"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 25, "w": 12, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Chain Block Reasons",
+      "targets": [
+        {
+          "expr": "sum by (route_name, reason) (increase(orchestrator_chain_block_reason_total[15m]))"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 31, "w": 12, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Second-Stage Execution Outcomes",
+      "targets": [
+        {
+          "expr": "sum by (route_name, stage_name, status) (increase(orchestrator_chain_execution_total[15m]))"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 37, "w": 12, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Chain Merge Applied vs Skipped",
+      "targets": [
+        {
+          "expr": "sum by (route_name, merge_mode, applied) (increase(orchestrator_chain_merge_total[15m]))"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 43, "w": 12, "h": 6 }
+    },
+    {
+      "type": "graph",
+      "title": "Second-Stage Average Duration (seconds)",
+      "targets": [
+        {
+          "expr": "sum by (route_name, stage_name) (rate(orchestrator_chain_stage_duration_seconds_sum[15m])) / sum by (route_name, stage_name) (rate(orchestrator_chain_stage_duration_seconds_count[15m]))"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 49, "w": 12, "h": 6 }
     }
   ],
   "schemaVersion": 36,
