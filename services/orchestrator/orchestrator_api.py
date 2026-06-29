@@ -342,6 +342,45 @@ def send_to_elk(payload: Dict[str, Any]) -> None:
         pass
 
 
+def build_webhook_observer_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    reduced_payload: Dict[str, Any] = {}
+    for key in [
+        "study_uid",
+        "job_id",
+        "status",
+        "inference_status",
+        "created_at",
+        "latency_ms",
+        "errors",
+    ]:
+        if key in payload:
+            reduced_payload[key] = payload[key]
+
+    ai_result = payload.get("ai_result") or {}
+    reduced_ai_result: Dict[str, Any] = {}
+    for key in [
+        "finding",
+        "exam",
+        "technique",
+        "findings",
+        "impression",
+        "abnormal",
+        "confidence",
+        "confidence_band",
+        "diagnostic_support",
+        "diagnostic_available",
+        "report_type",
+        "summary",
+        "recommendation",
+        "limitations",
+    ]:
+        if key in ai_result:
+            reduced_ai_result[key] = ai_result[key]
+    reduced_payload["ai_result"] = reduced_ai_result
+    reduced_payload["dicom_metadata"] = payload.get("dicom_metadata") or {}
+    return reduced_payload
+
+
 def send_to_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
     if not RESULT_WEBHOOK_URL:
         return {
@@ -352,7 +391,8 @@ def send_to_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             "detail": "Webhook URL is empty.",
         }
     try:
-        response = requests.post(RESULT_WEBHOOK_URL, json=payload, timeout=30)
+        observer_payload = build_webhook_observer_payload(payload)
+        response = requests.post(RESULT_WEBHOOK_URL, json=observer_payload, timeout=30)
         response.raise_for_status()
         return {
             "target": "webhook",

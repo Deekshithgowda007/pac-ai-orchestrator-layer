@@ -13,8 +13,60 @@ orchestrator_api = importlib.import_module("orchestrator_api")
 
 
 class PublishResultPayloadTests(unittest.TestCase):
+    def test_build_webhook_observer_payload_keeps_only_clinical_summary_and_metadata(self) -> None:
+        payload = {
+            "study_uid": "study-webhook-min",
+            "job_id": "job-1",
+            "status": "completed",
+            "inference_status": "completed",
+            "created_at": "2026-06-29T10:00:00",
+            "latency_ms": 1234,
+            "errors": [],
+            "ai_result": {
+                "model_name": "internal-model-name",
+                "finding": "Short finding",
+                "exam": "CT chest",
+                "technique": "Axial CT",
+                "findings": "Short findings",
+                "impression": "Short impression",
+                "abnormal": True,
+                "confidence": None,
+                "confidence_band": "high",
+                "diagnostic_support": "screening-only",
+                "diagnostic_available": True,
+                "report_type": "preliminary-lung-nodule-screening",
+                "summary": "Short summary",
+                "recommendation": "Radiologist review required.",
+                "limitations": ["Screening only."],
+                "routing_decision": {"route_name": "ct-monai-screening"},
+                "model_registry": {"model_name": "internal-model-name"},
+                "second_stage_execution": {"invoked": True},
+            },
+            "dicom_metadata": {"metadata_summary": {"series": {"modality": "CT"}}, "metadata": {"PatientID": "123"}},
+            "delivery_status": {"webhook": {"status": "delivered"}},
+        }
+
+        result = orchestrator_api.build_webhook_observer_payload(payload)
+
+        self.assertEqual(result["study_uid"], "study-webhook-min")
+        self.assertIn("ai_result", result)
+        self.assertIn("dicom_metadata", result)
+        self.assertNotIn("delivery_status", result)
+        self.assertEqual(result["ai_result"]["finding"], "Short finding")
+        self.assertNotIn("model_name", result["ai_result"])
+        self.assertNotIn("routing_decision", result["ai_result"])
+        self.assertNotIn("second_stage_execution", result["ai_result"])
+
     def test_send_to_webhook_succeeds_when_configured(self) -> None:
-        payload = {"study_uid": "study-webhook-ok"}
+        payload = {
+            "study_uid": "study-webhook-ok",
+            "job_id": "job-2",
+            "ai_result": {
+                "finding": "Short finding",
+                "model_name": "hidden-model-name",
+            },
+            "dicom_metadata": {"metadata_summary": {}, "metadata": {}},
+        }
         response = Mock()
         response.status_code = 200
         response.raise_for_status.return_value = None
@@ -26,6 +78,10 @@ class PublishResultPayloadTests(unittest.TestCase):
             result = orchestrator_api.send_to_webhook(payload)
 
         mocked_post.assert_called_once()
+        sent_payload = mocked_post.call_args.kwargs["json"]
+        self.assertEqual(sent_payload["study_uid"], "study-webhook-ok")
+        self.assertEqual(sent_payload["ai_result"]["finding"], "Short finding")
+        self.assertNotIn("model_name", sent_payload["ai_result"])
         self.assertTrue(result["enabled"])
         self.assertTrue(result["delivered"])
         self.assertEqual(result["status"], "delivered")
