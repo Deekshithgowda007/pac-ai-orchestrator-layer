@@ -8,7 +8,6 @@ import os
 import pydicom
 
 from pynetdicom import AE, StoragePresentationContexts
-from pydicom.uid import ExplicitVRLittleEndian
 
 app = FastAPI()
 
@@ -123,8 +122,6 @@ async def upload(file: UploadFile = File(...)):
         print("DICOM Modality:", getattr(ds, "Modality", "Unknown"))
         print("StudyInstanceUID:", getattr(ds, "StudyInstanceUID", "Unknown"))
 
-        # Convert to compatible transfer syntax
-        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
 
         ae = AE(ae_title="SCANSURE")
 
