@@ -7,7 +7,7 @@ import time
 import os
 import pydicom
 
-from pynetdicom import AE, StoragePresentationContexts
+from pynetdicom import AE
 
 app = FastAPI()
 
@@ -122,11 +122,20 @@ async def upload(file: UploadFile = File(...)):
         print("DICOM Modality:", getattr(ds, "Modality", "Unknown"))
         print("StudyInstanceUID:", getattr(ds, "StudyInstanceUID", "Unknown"))
 
+        # Offer the archive exactly one presentation context: the file's own SOP class in
+        # the file's own transfer syntax. With no alternative on the table the C-STORE
+        # either stores the object as it was received or is refused; it can never be
+        # converted on the way (offering the default syntaxes let the archive pick
+        # Implicit VR LE, and compressed files had no context at all).
+        sop_class = getattr(ds, "SOPClassUID", None)
+        transfer_syntax = getattr(getattr(ds, "file_meta", None), "TransferSyntaxUID", None)
+        if not sop_class or not transfer_syntax:
+            os.remove(temp_path)
+            return {"error": "DICOM file has no SOPClassUID or no TransferSyntaxUID; "
+                             "refusing to guess how to send it"}
 
         ae = AE(ae_title="SCANSURE")
-
-        for context in StoragePresentationContexts:
-            ae.add_requested_context(context.abstract_syntax)
+        ae.add_requested_context(sop_class, [transfer_syntax])
 
         print(f"Connecting to PACS {PACS_HOST}:{PACS_PORT} ...")
 
@@ -156,7 +165,14 @@ async def upload(file: UploadFile = File(...)):
         else:
             print("Association failed")
 
-            return {"error": "PACS association failed"}
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            # Unreachable archive, or the archive does not accept this transfer syntax
+            # over C-STORE. Either way nothing was stored and nothing is converted.
+            return {"error": "PACS did not accept an association offering only "
+                             f"{sop_class.name} in {transfer_syntax.name} ({transfer_syntax}). "
+                             "Nothing was stored; a file is never converted on upload."}
 
     except Exception as e:
 

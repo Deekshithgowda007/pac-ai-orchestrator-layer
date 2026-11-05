@@ -7,7 +7,9 @@ Not collected by pytest (needs an archive). Run it from services/hospital-servic
 MAIN_PY may point at another copy of main.py (for example the pre-fix file) to compare.
 For every fixture it prints what /upload answered and, if the archive stored the instance,
 whether the stored copy has the original TransferSyntaxUID and decodes to the original pixels.
-Exit code 1 if any stored instance differs from what was uploaded.
+Exit 0 only if EVERY fixture is stored with its original TransferSyntaxUID and pixels.
+Exit 1 if a stored instance differs from what was uploaded; exit 2 if nothing differs but
+some fixture was not stored at all (a refusal is safe, but it is not a pass).
 """
 import importlib.util
 import io
@@ -60,7 +62,7 @@ def stored_copy(ds):
     return pydicom.dcmread(io.BytesIO(payload[:-2] if payload.endswith(b"\r\n") else payload))
 
 
-rows, damaged = [], False
+rows, damaged, refused = [], False, []
 for name in sorted(FIXTURES):
     blob, _ = build(name)
     original = pydicom.dcmread(io.BytesIO(blob))
@@ -69,6 +71,8 @@ for name in sorted(FIXTURES):
            "upload_answer": {key: str(value)[:160] for key, value in answer.items()}}
     stored = stored_copy(original)
     row["stored_in_archive"] = stored is not None
+    if stored is None:
+        refused.append(name)
     if stored is not None:
         row["stored_ts"] = str(stored.file_meta.TransferSyntaxUID)
         try:
@@ -81,6 +85,9 @@ for name in sorted(FIXTURES):
     rows.append(row)
 
 print(json.dumps(rows, indent=2))
+if not damaged and refused:
+    print("RESULT: not stored:", ", ".join(refused))
+    sys.exit(2)
 print("RESULT:", "a stored instance DIFFERS from what was uploaded" if damaged
       else "every stored instance matches what was uploaded")
 sys.exit(1 if damaged else 0)
