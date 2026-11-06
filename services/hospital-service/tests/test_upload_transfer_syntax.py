@@ -15,6 +15,10 @@ transfer syntax. The object is stored as received or refused; it cannot be conve
 The transport is a stub (no archive is needed), so these tests pin what the route OFFERS and
 SENDS. What a real archive stores is proven by tests/live_pacs_probe.py against a running
 dcm4chee, which must exit 0 with the transfer syntax preserved for every fixture.
+
+3. An archive that does not accept the file's syntax over C-STORE (stock dcm4chee: Deflated,
+   Explicit VR Big Endian) used to mean "refused". The route now sends the uploaded bytes
+   verbatim by STOW-RS in that case; only HTTP 200 counts as stored.
 """
 import io
 import pathlib
@@ -137,17 +141,76 @@ def test_route_source_never_assigns_transfer_syntax():
     assert not re.search(r"TransferSyntaxUID\s*=[^=]", source)
 
 
-def test_refused_association_is_reported_and_names_the_transfer_syntax(client, main_module, monkeypatch):
-    class _RefusingAE(_AE):
-        def associate(self, *args, **kwargs):
-            return types.SimpleNamespace(is_established=False)
+class _RefusingAE(_AE):
+    def associate(self, *args, **kwargs):
+        return types.SimpleNamespace(is_established=False)
+
+
+def _refuse_c_store_and_answer_stow(main_module, monkeypatch, status=None, raises=None):
+    """C-STORE association refused; STOW-RS answers `status` or raises. Returns the calls."""
+    calls = []
+
+    def post(url, data=None, headers=None, timeout=None, **_):
+        calls.append({"url": url, "data": data, "headers": headers})
+        if raises is not None:
+            raise raises
+        return types.SimpleNamespace(status_code=status)
 
     monkeypatch.setattr(main_module, "AE", _RefusingAE)
+    monkeypatch.setattr(main_module.requests, "post", post)
+    return calls
+
+
+@pytest.mark.parametrize("name", ["deflated-explicit-le", "explicit-big-endian"])
+def test_refused_c_store_falls_back_to_stow_with_the_uploaded_bytes_verbatim(
+        client, main_module, monkeypatch, name):
+    calls = _refuse_c_store_and_answer_stow(main_module, monkeypatch, status=200)
+    blob, _ = build(name)
+
+    answer = client.post("/upload", files={"file": (f"{name}.dcm", blob, "application/dicom")}).json()
+
+    assert answer["transport"] == "stow-rs" and "error" not in answer
+    assert len(calls) == 1 and calls[0]["url"] == main_module.PACS_STOW_URL
+    content_type = calls[0]["headers"]["Content-Type"]
+    assert content_type.startswith('multipart/related; type="application/dicom"; boundary=')
+    boundary = content_type.split("boundary=", 1)[1].encode()
+    head = b"--" + boundary + b"\r\nContent-Type: application/dicom\r\n\r\n"
+    tail = b"\r\n--" + boundary + b"--\r\n"
+    # exactly the uploaded file between the part header and the closing boundary
+    assert calls[0]["data"] == head + blob + tail
+    assert _AE.sent == []
+
+
+@pytest.mark.parametrize("status", [202, 409, 500])
+def test_stow_fallback_counts_only_http_200_as_stored(client, main_module, monkeypatch, status):
+    _refuse_c_store_and_answer_stow(main_module, monkeypatch, status=status)
     blob, _ = build("deflated-explicit-le")
 
     answer = client.post("/upload", files={"file": ("deflated.dcm", blob, "application/dicom")}).json()
 
     assert "message" not in answer
     assert "1.2.840.10008.1.2.1.99" in answer["error"]
+    assert f"STOW-RS HTTP {status}" in answer["error"]
     assert "never converted" in answer["error"]
-    assert _AE.sent == []
+
+
+def test_unreachable_archive_is_reported_not_swallowed(client, main_module, monkeypatch):
+    _refuse_c_store_and_answer_stow(main_module, monkeypatch,
+                                    raises=main_module.requests.ConnectionError("down"))
+    blob, _ = build("deflated-explicit-le")
+
+    answer = client.post("/upload", files={"file": ("deflated.dcm", blob, "application/dicom")}).json()
+
+    assert "message" not in answer
+    assert "STOW-RS request failed: ConnectionError" in answer["error"]
+
+
+def test_accepted_c_store_never_uses_stow(client, main_module, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main_module.requests, "post", lambda *a, **k: calls.append(a))
+    blob, _ = build("jpeg-ls-lossless")
+
+    answer = client.post("/upload", files={"file": ("jls.dcm", blob, "application/dicom")}).json()
+
+    assert "error" not in answer and "transport" not in answer
+    assert calls == [] and len(_AE.sent) == 1

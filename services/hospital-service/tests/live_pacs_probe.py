@@ -41,6 +41,8 @@ spec = importlib.util.spec_from_file_location("main_under_probe", MAIN_PY)
 main = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(main)
 main.PACS_HOST = os.environ["PACS_HOST"]
+if hasattr(main, "PACS_STOW_URL"):  # absent in a pre-fix main.py given via MAIN_PY
+    main.PACS_STOW_URL = RS + "/studies"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

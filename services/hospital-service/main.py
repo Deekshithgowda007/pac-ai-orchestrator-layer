@@ -6,6 +6,7 @@ import uuid
 import time
 import os
 import pydicom
+import requests
 
 from pynetdicom import AE
 
@@ -18,6 +19,31 @@ app = FastAPI()
 PACS_HOST = "dcm4chee-arc"
 PACS_PORT = 11112
 PACS_AET = "DCM4CHEE"
+# STOW-RS endpoint of the same archive: used only when the archive does not accept the
+# file's own transfer syntax over C-STORE (dcm4chee's stock C-STORE capability omits, for
+# example, Deflated and Explicit VR Big Endian, while its STOW-RS stores both as received).
+PACS_STOW_URL = os.getenv(
+    "PACS_STOW_URL", "http://dcm4chee-arc:8080/dcm4chee-arc/aets/DCM4CHEE/rs/studies")
+
+
+def stow_original_bytes(payload: bytes):
+    """STOW-RS the uploaded file exactly as received. Returns (stored, detail).
+
+    The bytes are the multipart part verbatim: nothing is parsed, re-encoded or relabelled.
+    Only HTTP 200 counts as stored. 202 means the archive stored with warnings or coerced
+    something, and 409 means it refused; neither is reported as success.
+    """
+    boundary = "scansure-" + uuid.uuid4().hex
+    body = (f"--{boundary}\r\nContent-Type: application/dicom\r\n\r\n".encode()
+            + payload + f"\r\n--{boundary}--\r\n".encode())
+    try:
+        response = requests.post(
+            PACS_STOW_URL, data=body, timeout=120,
+            headers={"Content-Type": f'multipart/related; type="application/dicom"; boundary={boundary}',
+                     "Accept": "application/dicom+json"})
+    except requests.RequestException as exc:
+        return False, f"STOW-RS request failed: {type(exc).__name__}"
+    return response.status_code == 200, f"STOW-RS HTTP {response.status_code}"
 
 # -----------------------
 # CORS
@@ -114,8 +140,9 @@ async def upload(file: UploadFile = File(...)):
     try:
 
         # Save uploaded file
+        payload = await file.read()
         with open(temp_path, "wb") as f:
-            f.write(await file.read())
+            f.write(payload)
 
         ds = pydicom.dcmread(temp_path)
 
@@ -168,10 +195,20 @@ async def upload(file: UploadFile = File(...)):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-            # Unreachable archive, or the archive does not accept this transfer syntax
-            # over C-STORE. Either way nothing was stored and nothing is converted.
+            # No association: the archive is unreachable, or it does not accept this
+            # transfer syntax over C-STORE. Offering a different syntax would convert the
+            # file, so the original bytes go by STOW-RS instead, or nothing is stored.
+            stored, detail = stow_original_bytes(payload)
+            if stored:
+                return {
+                    "message": "DICOM successfully sent to PACS",
+                    "status": detail,
+                    "transport": "stow-rs",
+                }
+
             return {"error": "PACS did not accept an association offering only "
-                             f"{sop_class.name} in {transfer_syntax.name} ({transfer_syntax}). "
+                             f"{sop_class.name} in {transfer_syntax.name} ({transfer_syntax}), "
+                             f"and the STOW-RS fallback did not store it ({detail}). "
                              "Nothing was stored; a file is never converted on upload."}
 
     except Exception as e:
