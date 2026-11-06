@@ -5,6 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY pacs_fetcher.py .
+COPY pacs_fetcher.py object_kind.py ./
 
 CMD ["python", "-u", "pacs_fetcher.py"]

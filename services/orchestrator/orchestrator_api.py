@@ -18,6 +18,7 @@ from prometheus_client import Counter, Histogram, make_asgi_app
 from supabase import create_client
 
 from prometheus_middleware import metrics_middleware
+from object_kind import excluded_kind
 
 load_dotenv()
 
@@ -3597,10 +3598,41 @@ def process_series(series_files: List[Dict[str, Any]], source: str = "pacs") -> 
     return result
 
 
-def collect_series_from_upload(file_blobs: List[Tuple[str, bytes]]) -> List[Dict[str, Any]]:
+def attach_skipped_objects(webhook_payload: Dict[str, Any], attachments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """List the non-image objects that were left out of series assembly.
+
+    They are recorded in dicom_metadata.attachments with their kind and UIDs, so a report or
+    a segmentation in the study is visible in the result instead of silently missing.
+    """
+    metadata = webhook_payload.get("dicom_metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        webhook_payload["dicom_metadata"] = metadata
+    metadata["attachments"] = list(attachments)
+    return webhook_payload
+
+
+def collect_series_from_upload(
+    file_blobs: List[Tuple[str, bytes]],
+    attachments: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     grouped_series: Dict[str, List[Dict[str, Any]]] = {}
     for index, (fname, body) in enumerate(file_blobs):
         metadata = extract_full_dicom_metadata(body)
+        # Images only: a report, segmentation, presentation state, key object, RT object,
+        # PDF or waveform is not a series to analyse or to pick as the primary series.
+        skipped_kind = excluded_kind(metadata.get("SOPClassUID"), metadata.get("Modality"))
+        if skipped_kind:
+            if attachments is not None:
+                attachments.append(
+                    {
+                        "kind": skipped_kind,
+                        "sop_instance_uid": metadata.get("SOPInstanceUID"),
+                        "series_uid": metadata.get("SeriesInstanceUID"),
+                        "sop_class_uid": metadata.get("SOPClassUID"),
+                    }
+                )
+            continue
         series_key = metadata.get("SeriesInstanceUID") or f"upload-series-{index}"
         grouped_series.setdefault(series_key, []).append(
             {"filename": fname or f"instance-{index:04d}.dcm", "content": body, "metadata": metadata}
@@ -3629,10 +3661,13 @@ async def trigger_inference_multi(files: List[UploadFile] = File(...)):
 
     log_id = str(uuid.uuid4())
     file_blobs = [(file.filename, await file.read()) for file in files]
-    series_entries = collect_series_from_upload(file_blobs)
+    attachments: List[Dict[str, Any]] = []
+    series_entries = collect_series_from_upload(file_blobs, attachments)
     primary_series_uid = select_primary_series(series_entries)
     results: List[Dict[str, Any]] = []
     errors: List[str] = []
+    if attachments and not series_entries:
+        errors.append(f"no image objects to analyse: {len(attachments)} non-image object(s) skipped")
     study_uid = series_entries[0]["study_uid"] if series_entries else log_id
 
     for series_entry in series_entries:
@@ -3680,6 +3715,7 @@ async def trigger_inference_multi(files: List[UploadFile] = File(...)):
         start_ts,
         log_id,
     )
+    webhook_payload = attach_skipped_objects(webhook_payload, attachments)
     webhook_payload = publish_result_payload(webhook_payload)
     delivery_status = derive_delivery_status(webhook_payload)
     operation_status = derive_operation_status(inference_status, delivery_status)
@@ -3715,6 +3751,7 @@ def trigger_inference_pacs(study_uid: str = Form(...), series_uid: Optional[str]
     results: List[Dict[str, Any]] = []
     errors: List[str] = []
     series_map: Dict[str, List[Dict[str, Any]]] = {}
+    attachments: List[Dict[str, Any]] = []
     for instance in instances:
         sop_uid = instance.get("00080018", {}).get("Value", [None])[0]
         current_series_uid = instance.get("0020000E", {}).get("Value", [None])[0]
@@ -3723,11 +3760,26 @@ def trigger_inference_pacs(study_uid: str = Form(...), series_uid: Optional[str]
         if not sop_uid or not current_series_uid:
             errors.append("invalid instance metadata")
             continue
-        if modality_value == "SR" or sop_class_uid == "1.2.840.10008.5.1.4.1.1.88.33":
+        # Images only. This used to exclude structured reports alone; a segmentation,
+        # presentation state, key object, RT object, PDF or waveform reached series
+        # assembly and could be chosen as the primary series.
+        skipped_kind = excluded_kind(sop_class_uid, modality_value)
+        if skipped_kind:
+            attachments.append(
+                {
+                    "kind": skipped_kind,
+                    "sop_instance_uid": sop_uid,
+                    "series_uid": current_series_uid,
+                    "sop_class_uid": sop_class_uid,
+                }
+            )
             continue
         series_map.setdefault(current_series_uid, []).append(
             {"sop_uid": sop_uid, "series_uid": current_series_uid}
         )
+
+    if attachments and not series_map:
+        errors.append(f"no image objects to analyse: {len(attachments)} non-image object(s) skipped")
 
     series_entries: List[Dict[str, Any]] = []
     for current_series_uid, series_instances in series_map.items():
@@ -3811,6 +3863,7 @@ def trigger_inference_pacs(study_uid: str = Form(...), series_uid: Optional[str]
             pass
 
     webhook_payload = build_study_webhook_payload(study_uid, results, errors, start_ts, log_id)
+    webhook_payload = attach_skipped_objects(webhook_payload, attachments)
     webhook_payload = publish_result_payload(webhook_payload)
     delivery_status = derive_delivery_status(webhook_payload)
     operation_status = derive_operation_status(inference_status, delivery_status)
