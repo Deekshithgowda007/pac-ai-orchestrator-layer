@@ -1,0 +1,8 @@
+# Test-only dependencies for services/hospital-service/tests.
+pytest
+httpx
+numpy
+pynetdicom
+pylibjpeg
+pylibjpeg-openjpeg
+pyjpegls
