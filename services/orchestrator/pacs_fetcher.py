@@ -5,6 +5,8 @@ import requests
 import email
 from kafka import KafkaProducer
 
+from object_kind import excluded_kind, first_image_modality
+
 print("🟡 pacs_fetcher starting", flush=True)
 
 # -------------------------------------------------
@@ -139,7 +141,9 @@ while True:
 
             print(f"📚 New study {study_uid}", flush=True)
 
-            modality = _first_value(s, "00080061", "UNKNOWN")
+            # The hint is the first IMAGE modality: a study listed as ["SR", "CT"] is a CT
+            # study with a report in it.
+            modality = first_image_modality((s.get("00080061") or {}).get("Value"), "UNKNOWN")
             body_part = _best_body_part(s)
 
             study_dir = f"{BASE_DICOM_DIR}/{study_uid}"
@@ -174,6 +178,14 @@ while True:
 
                 for inst in ir.json():
                     sop_uid = inst["00080018"]["Value"][0]
+                    skipped_kind = excluded_kind(
+                        _first_value(inst, "00080016") or None,
+                        _first_value(inst, "00080060") or _first_value(series, "00080060") or None,
+                    )
+                    if skipped_kind:
+                        # Not an image: not downloaded, not part of the series handed on.
+                        print(f"⏭️ Skipping non-image object {sop_uid} ({skipped_kind})", flush=True)
+                        continue
                     out_path = f"{study_dir}/{sop_uid}.dcm"
 
                     if os.path.exists(out_path):
