@@ -13,6 +13,9 @@ import numpy as np
 import requests
 from models.hf_utils import resolve_hf_bundle_dir
 from models.heuristic_fallback import HeuristicFallbackEngine
+from models import model_registry
+from models.manifest_registry import NoMatch, explain_candidates, select_models
+from models.study_description import StudyDescriptor
 from models.study_context import StudyContext
 from models.support_matrix import describe_support
 
@@ -1320,125 +1323,151 @@ class AdapterRegistry:
             "totalseg_mr": TotalSegmentatorAdapter("MR"),
             "fallback": FallbackAdapter(),
         }
-        self.routing_rules = [
-            {
-                "name": "ct-monai-screening",
-                "modalities": {"CT"},
-                "adapter": "ct_monai",
-                "reason": "Chest CT studies route to the MONAI lung nodule detection bundle when the bundle checkpoint is configured and the study appears chest-focused.",
-            },
-            {
-                "name": "mr-brats-segmentation",
-                "modalities": {"MR", "MRI"},
-                "adapter": "mr_brats",
-                "reason": "Brain MRI studies route to the BraTS SegResNet bundle when the required four-sequence input set is available.",
-            },
+        # No routing table here any more (SDD-SCANSURE-AI-002 T3). Which adapter may see a study
+        # is decided by models/manifests/*.json + registry.lock.json through select_models(),
+        # against the StudyProfile. The heuristic fallback is no longer appended: a study nothing
+        # accepts is reported as unavailable, never given a verdict from voxel statistics.
+        self.last_no_match: Optional[NoMatch] = None
+        # Rung 3 of the ladder (SDD-002 T3b): runs for every readable study, after the models.
+        self.descriptor = StudyDescriptor()
 
-            {
-                "name": "us-echo-lite-lv-function",
-                "modalities": {"US"},
-                "adapter": "us_echo_lite",
-                "reason": "Ultrasound echocardiographic cine clips route first to the lightweight LV function estimator to derive an EF-focused screening summary without heavy model downloads.",
-            },
-            {
-                "name": "us-hf-2d-screening",
-                "modalities": {"US"},
-                "adapter": "us_hf_2d",
-                "reason": "Ultrasound studies can route to a US-specific Hugging Face image-to-text fallback using a representative DICOM-derived PNG when configured.",
-            },
-            {
-                "name": "xa-stenosis-screening",
-                "modalities": {"XA"},
-                "adapter": "xa_stenunet",
-                "reason": "XA studies route to the StenUNet research screening model when the repository and checkpoint are available.",
-            },
-            {
-                "name": "chest-radiograph-screening",
-                "modalities": {"CR", "DX", "MG"},
-                "body_parts": {"CHEST", "LUNG"},
-                "adapter": "xrayvision",
-                "reason": "Projection chest studies route to chest X-ray screening model.",
-            },
-            {
-                "name": "hf-2d-screening",
-                "modalities": {"CR", "DX", "MG", "CT", "MR", "MRI", "US", "RF", "XA"},
-                "adapter": "hf_2d",
-                "reason": "Projection X-ray and other single-frame studies can route to a Hugging Face 2D model using a DICOM-derived PNG when configured.",
-            },
-            {
-                "name": "unsupported-modalities",
-                "modalities": {"XA", "RF", "US", "NM", "PT", "OCT"},
-                "adapter": "unsupported",
-                "reason": "Unsupported modality is routed directly to manual review.",
-            },
-            {
-                "name": "ct-anatomy-segmentation",
-                "modalities": {"CT"},
-                "adapter": "totalseg_ct",
-                "reason": "CT studies route to TotalSegmentator CT anatomy pipeline when no pathology model is configured.",
-            },
-            {
-                "name": "mr-anatomy-segmentation",
-                "modalities": {"MR", "MRI"},
-                "adapter": "totalseg_mr",
-                "reason": "MR studies route to TotalSegmentator MR anatomy pipeline when no pathology model is configured.",
-            },
-            {
-                "name": "fallback",
-                "modalities": set(),
-                "adapter": "fallback",
-                "reason": "No modality-specific route matched, so the deterministic fallback engine is used.",
-            },
-        ]
-
-    def _select_adapters(self, context: StudyContext) -> List[tuple[str, ModalityAdapter, str]]:
-        modality = context.modality.upper()
-        body_part = context.body_part.upper()
-        selected: List[tuple[str, ModalityAdapter, str]] = []
-        seen: set[str] = set()
-
-        for rule in self.routing_rules:
-            allowed_modalities = rule.get("modalities") or set()
-            allowed_bodies = rule.get("body_parts") or set()
-            if allowed_modalities and modality not in allowed_modalities:
+    def _select_adapters(self, context: StudyContext) -> List[tuple]:
+        """(route_name, adapter, reason, manifest) for every manifest that accepts the study, best
+        first. Empty when none does; self.last_no_match then says why."""
+        self.last_no_match = None
+        outcome = select_models(context.profile or {}, model_registry.registry())
+        if isinstance(outcome, NoMatch):
+            self.last_no_match = outcome
+            return []
+        selected: List[tuple] = []
+        for match in outcome:
+            adapter_name = match.manifest["runtime"]["adapter"]
+            adapter = self.adapters.get(adapter_name)
+            if adapter is None:
+                log.error("manifest %s@%s names adapter %r which this image does not have",
+                          match.model_id, match.version, adapter_name)
                 continue
-            if allowed_bodies and not any(token in body_part for token in allowed_bodies):
-                continue
-            adapter_name = rule["adapter"]
-            if adapter_name in seen:
-                continue
-            adapter = self.adapters[adapter_name]
-            selected.append((rule["name"], adapter, rule["reason"]))
-            seen.add(adapter_name)
-
-        if "fallback" not in seen:
-            selected.append(("fallback", self.adapters["fallback"], "Fallback adapter appended as last resort."))
+            reason = (f"{match.tier} manifest {match.model_id} accepts "
+                      f"{context.profile.get('modality')}/{context.profile.get('protocol_family')}/"
+                      f"{context.profile.get('dimensionality')}")
+            selected.append((match.route_name, adapter, reason, match.manifest))
         return selected
 
+    @staticmethod
+    def unavailable(context: StudyContext, status: str, detail: str, *, route_name: str = "no-matching-manifest",
+                    errors: Optional[List[str]] = None) -> Dict[str, Any]:
+        """The result for a study no model may read. Same shape as a reading, with every clinical
+        field explicitly absent: abnormal None, confidence None, no finding sentence a reader could
+        mistake for one a model produced. ``analysis_status`` is one the downstream contract maps
+        to ANALYSIS_UNAVAILABLE; the specific reason travels in ``routing_decision``."""
+        profile = context.profile or {}
+        return {
+            "model_name": "none",
+            "model_id": None,
+            "model_version": None,
+            "finding": f"No AI analysis: {detail}",
+            "abnormal": None,
+            "confidence": None,
+            "diagnostic_support": "not-supported",
+            "report_type": "manual-review-required",
+            "analysis_type": "analysis-unavailable",
+            "analysis_status": "unsupported-for-diagnostic-inference",
+            "anatomy_involved": context.body_part,
+            "region": "not-applicable",
+            "observations": [
+                f"Study profile: modality={profile.get('modality')} protocol_family={profile.get('protocol_family')} "
+                f"dimensionality={profile.get('dimensionality')} body_part={(profile.get('body_part') or {}).get('normalized')}.",
+                f"Routing outcome: {status}.",
+            ],
+            "abnormalities": [],
+            "impact": "No automated interpretation was produced.",
+            "recommendation": "Radiologist review required; no AI preliminary is available for this study.",
+            "limitations": [detail] + list(errors or []),
+            "metrics": {},
+            "adapter_name": None,
+            "routing_decision": {
+                "route_name": route_name,
+                "reason": detail,
+                "no_match_reason": status,
+                "modality": context.modality,
+                "body_part": context.body_part,
+            },
+            "support_matrix": describe_support(route_name),
+        }
+
+    def _stamp(self, result: Dict[str, Any], route_name: str, reason: str, manifest: Dict[str, Any],
+               context: StudyContext) -> None:
+        result["adapter_name"] = result.get("adapter_name") or self.adapters[manifest["runtime"]["adapter"]].__class__.__name__
+        result["model_id"] = manifest["model_id"]
+        result["model_version"] = manifest["version"]
+        result["tier"] = manifest["tier"]
+        result["routing_decision"] = {
+            "route_name": route_name,
+            "reason": reason,
+            "kind": manifest["outputs"]["kind"],
+            "model_id": manifest["model_id"],
+            "model_version": manifest["version"],
+            "tier": manifest["tier"],
+            "modality": context.modality,
+            "body_part": context.body_part,
+        }
+        result["support_matrix"] = describe_support(route_name)
+
     def analyze(self, context: StudyContext) -> Dict[str, Any]:
-        errors: List[str] = []
-        for route_name, adapter, route_reason in self._select_adapters(context):
-            if not adapter.supports(context):
-                continue
+        """The routing ladder (SDD-SCANSURE-AI-002 T3b).
+
+        Rung 1: pathology models whose manifests accept the study, best first; the first that
+        produces a result is the primary. Rung 2: anatomy models, run alongside and attached as
+        supporting results. Rung 3: the descriptive summary, for every readable study, always.
+        The result is the primary reading when there is one, otherwise the description. Either
+        way it carries ``ladder`` (one line per manifest: why it did or did not run) and
+        ``supporting_results``. Nothing on this ladder produces a verdict from pixel statistics.
+        """
+        registry = model_registry.registry()
+        ladder = explain_candidates(context.profile or {}, registry)
+        by_route = {row["route_name"]: row for row in ladder}
+        primary: Optional[Dict[str, Any]] = None
+        supporting: List[Dict[str, Any]] = []
+        for route_name, adapter, reason, manifest in self._select_adapters(context):
+            row = by_route.setdefault(route_name, {"route_name": route_name})
             try:
+                if not adapter.supports(context):
+                    row.update(outcome="declined", detail=None)
+                    continue
                 result = adapter.analyze(context)
-                result["adapter_name"] = adapter.__class__.__name__
-                result["routing_decision"] = {
-                    "route_name": route_name,
-                    "reason": route_reason,
-                    "modality": context.modality,
-                    "body_part": context.body_part,
-                }
-                result["support_matrix"] = describe_support(route_name)
-                if errors:
-                    result.setdefault("limitations", []).append(
-                        f"Earlier adapters failed before success: {'; '.join(errors)}"
-                    )
-                return result
             except Exception as exc:
-                errors.append(f"{adapter.__class__.__name__}: {exc}")
+                log.warning("adapter %s failed on %s: %s", adapter.__class__.__name__, context.study_uid, exc)
+                row.update(outcome="failed", detail=f"{type(exc).__name__}: {exc}")
                 continue
-        raise RuntimeError(f"No adapter succeeded for modality {context.modality}. Errors: {'; '.join(errors)}")
+            self._stamp(result, route_name, reason, manifest, context)
+            row.update(outcome="ran", detail=None)
+            if manifest["outputs"]["kind"] == "anatomy":
+                supporting.append(result)
+            elif primary is None:
+                primary = result
+            else:
+                supporting.append(result)
+        if self.last_no_match is not None:
+            ladder.append({"route_name": "registry", "outcome": self.last_no_match.reason, "detail": self.last_no_match.detail})
+
+        anatomy = [r for r in supporting if (r.get("routing_decision") or {}).get("kind") == "anatomy"]
+        description = self.descriptor.describe(context, anatomy=anatomy, ladder=ladder)
+        description["routing_decision"] = {
+            "route_name": "study-descriptor", "kind": "descriptive", "model_id": description["model_id"],
+            "model_version": description["model_version"], "tier": None,
+            "reason": "rung 3: every readable study is described; this is not a model and makes no clinical claim",
+            "modality": context.modality, "body_part": context.body_part,
+        }
+        description["support_matrix"] = describe_support("study-descriptor")
+        if primary is not None:
+            primary["supporting_results"] = supporting + [description]
+            primary["ladder"] = ladder
+            return primary
+        description["supporting_results"] = supporting
+        description["ladder"] = ladder
+        log.info("no pathology model ran for %s; descriptive summary returned (%s)", context.study_uid,
+                 "; ".join(f"{r.get('route_name')}={r.get('outcome')}" for r in ladder))
+        return description
 
 
 

@@ -139,6 +139,13 @@ def build_report(engine_result: Dict[str, Any], metadata: Dict[str, str]) -> Dic
         "routing_decision": engine_result.get("routing_decision", {}),
         "support_matrix": engine_result.get("support_matrix", {}),
         "model_registry": engine_result.get("support_matrix", {}),
+        # SDD-SCANSURE-AI-002 T3b: the model stamp and the ladder travel with the report.
+        "model_id": engine_result.get("model_id"),
+        "model_version": engine_result.get("model_version"),
+        "tier": engine_result.get("tier"),
+        "impression_summary": engine_result.get("impression_summary"),
+        "ladder": engine_result.get("ladder", []),
+        "supporting_results": engine_result.get("supporting_results", []),
         "metadata_summary": {
             "study_uid": metadata.get("StudyInstanceUID"),
             "series_uid": metadata.get("SeriesInstanceUID"),
