@@ -13,6 +13,8 @@ import numpy as np
 import requests
 from models.hf_utils import resolve_hf_bundle_dir
 from models.heuristic_fallback import HeuristicFallbackEngine
+from models import model_registry
+from models.manifest_registry import NoMatch, select_models
 from models.study_context import StudyContext
 from models.support_matrix import describe_support
 
@@ -1320,104 +1322,82 @@ class AdapterRegistry:
             "totalseg_mr": TotalSegmentatorAdapter("MR"),
             "fallback": FallbackAdapter(),
         }
-        self.routing_rules = [
-            {
-                "name": "ct-monai-screening",
-                "modalities": {"CT"},
-                "adapter": "ct_monai",
-                "reason": "Chest CT studies route to the MONAI lung nodule detection bundle when the bundle checkpoint is configured and the study appears chest-focused.",
-            },
-            {
-                "name": "mr-brats-segmentation",
-                "modalities": {"MR", "MRI"},
-                "adapter": "mr_brats",
-                "reason": "Brain MRI studies route to the BraTS SegResNet bundle when the required four-sequence input set is available.",
-            },
-
-            {
-                "name": "us-echo-lite-lv-function",
-                "modalities": {"US"},
-                "adapter": "us_echo_lite",
-                "reason": "Ultrasound echocardiographic cine clips route first to the lightweight LV function estimator to derive an EF-focused screening summary without heavy model downloads.",
-            },
-            {
-                "name": "us-hf-2d-screening",
-                "modalities": {"US"},
-                "adapter": "us_hf_2d",
-                "reason": "Ultrasound studies can route to a US-specific Hugging Face image-to-text fallback using a representative DICOM-derived PNG when configured.",
-            },
-            {
-                "name": "xa-stenosis-screening",
-                "modalities": {"XA"},
-                "adapter": "xa_stenunet",
-                "reason": "XA studies route to the StenUNet research screening model when the repository and checkpoint are available.",
-            },
-            {
-                "name": "chest-radiograph-screening",
-                "modalities": {"CR", "DX", "MG"},
-                "body_parts": {"CHEST", "LUNG"},
-                "adapter": "xrayvision",
-                "reason": "Projection chest studies route to chest X-ray screening model.",
-            },
-            {
-                "name": "hf-2d-screening",
-                "modalities": {"CR", "DX", "MG", "CT", "MR", "MRI", "US", "RF", "XA"},
-                "adapter": "hf_2d",
-                "reason": "Projection X-ray and other single-frame studies can route to a Hugging Face 2D model using a DICOM-derived PNG when configured.",
-            },
-            {
-                "name": "unsupported-modalities",
-                "modalities": {"XA", "RF", "US", "NM", "PT", "OCT"},
-                "adapter": "unsupported",
-                "reason": "Unsupported modality is routed directly to manual review.",
-            },
-            {
-                "name": "ct-anatomy-segmentation",
-                "modalities": {"CT"},
-                "adapter": "totalseg_ct",
-                "reason": "CT studies route to TotalSegmentator CT anatomy pipeline when no pathology model is configured.",
-            },
-            {
-                "name": "mr-anatomy-segmentation",
-                "modalities": {"MR", "MRI"},
-                "adapter": "totalseg_mr",
-                "reason": "MR studies route to TotalSegmentator MR anatomy pipeline when no pathology model is configured.",
-            },
-            {
-                "name": "fallback",
-                "modalities": set(),
-                "adapter": "fallback",
-                "reason": "No modality-specific route matched, so the deterministic fallback engine is used.",
-            },
-        ]
+        # No routing table here any more (SDD-SCANSURE-AI-002 T3). Which adapter may see a study
+        # is decided by models/manifests/*.json + registry.lock.json through select_models(),
+        # against the StudyProfile. The heuristic fallback is no longer appended: a study nothing
+        # accepts is reported as unavailable, never given a verdict from voxel statistics.
+        self.last_no_match: Optional[NoMatch] = None
 
     def _select_adapters(self, context: StudyContext) -> List[tuple[str, ModalityAdapter, str]]:
-        modality = context.modality.upper()
-        body_part = context.body_part.upper()
+        self.last_no_match = None
+        outcome = select_models(context.profile or {}, model_registry.registry())
+        if isinstance(outcome, NoMatch):
+            self.last_no_match = outcome
+            return []
         selected: List[tuple[str, ModalityAdapter, str]] = []
-        seen: set[str] = set()
-
-        for rule in self.routing_rules:
-            allowed_modalities = rule.get("modalities") or set()
-            allowed_bodies = rule.get("body_parts") or set()
-            if allowed_modalities and modality not in allowed_modalities:
+        for match in outcome:
+            adapter_name = match.manifest["runtime"]["adapter"]
+            adapter = self.adapters.get(adapter_name)
+            if adapter is None:
+                log.error("manifest %s@%s names adapter %r which this image does not have",
+                          match.model_id, match.version, adapter_name)
                 continue
-            if allowed_bodies and not any(token in body_part for token in allowed_bodies):
-                continue
-            adapter_name = rule["adapter"]
-            if adapter_name in seen:
-                continue
-            adapter = self.adapters[adapter_name]
-            selected.append((rule["name"], adapter, rule["reason"]))
-            seen.add(adapter_name)
-
-        if "fallback" not in seen:
-            selected.append(("fallback", self.adapters["fallback"], "Fallback adapter appended as last resort."))
+            reason = (f"{match.tier} manifest {match.model_id} accepts "
+                      f"{context.profile.get('modality')}/{context.profile.get('protocol_family')}/"
+                      f"{context.profile.get('dimensionality')}")
+            selected.append((match.route_name, adapter, reason))
         return selected
+
+    @staticmethod
+    def unavailable(context: StudyContext, status: str, detail: str, *, route_name: str = "no-matching-manifest",
+                    errors: Optional[List[str]] = None) -> Dict[str, Any]:
+        """The result for a study no model may read. Same shape as a reading, with every clinical
+        field explicitly absent: abnormal None, confidence None, no finding sentence a reader could
+        mistake for one a model produced. ``analysis_status`` is one the downstream contract maps
+        to ANALYSIS_UNAVAILABLE; the specific reason travels in ``routing_decision``."""
+        profile = context.profile or {}
+        return {
+            "model_name": "none",
+            "model_id": None,
+            "model_version": None,
+            "finding": f"No AI analysis: {detail}",
+            "abnormal": None,
+            "confidence": None,
+            "diagnostic_support": "not-supported",
+            "report_type": "manual-review-required",
+            "analysis_type": "analysis-unavailable",
+            "analysis_status": "unsupported-for-diagnostic-inference",
+            "anatomy_involved": context.body_part,
+            "region": "not-applicable",
+            "observations": [
+                f"Study profile: modality={profile.get('modality')} protocol_family={profile.get('protocol_family')} "
+                f"dimensionality={profile.get('dimensionality')} body_part={(profile.get('body_part') or {}).get('normalized')}.",
+                f"Routing outcome: {status}.",
+            ],
+            "abnormalities": [],
+            "impact": "No automated interpretation was produced.",
+            "recommendation": "Radiologist review required; no AI preliminary is available for this study.",
+            "limitations": [detail] + list(errors or []),
+            "metrics": {},
+            "adapter_name": None,
+            "routing_decision": {
+                "route_name": route_name,
+                "reason": detail,
+                "no_match_reason": status,
+                "modality": context.modality,
+                "body_part": context.body_part,
+            },
+            "support_matrix": describe_support(route_name),
+        }
 
     def analyze(self, context: StudyContext) -> Dict[str, Any]:
         errors: List[str] = []
-        for route_name, adapter, route_reason in self._select_adapters(context):
+        candidates = self._select_adapters(context)
+        if not candidates:
+            no_match = self.last_no_match or NoMatch("no_manifest_for_profile", "no manifest accepted the study")
+            log.info("no model for study: %s -- %s", no_match.reason, no_match.detail)
+            return self.unavailable(context, no_match.reason, no_match.detail)
+        for route_name, adapter, route_reason in candidates:
             if not adapter.supports(context):
                 continue
             try:
@@ -1438,7 +1418,12 @@ class AdapterRegistry:
             except Exception as exc:
                 errors.append(f"{adapter.__class__.__name__}: {exc}")
                 continue
-        raise RuntimeError(f"No adapter succeeded for modality {context.modality}. Errors: {'; '.join(errors)}")
+        # Every accepted model failed or declined. Until T3 this raised, and InferenceEngine ran
+        # the heuristic on the pixels instead; now the failure is the result, with each error named.
+        log.warning("every matched adapter failed for %s: %s", context.study_uid, "; ".join(errors) or "all declined")
+        return self.unavailable(context, "adapter_failed",
+                                f"{len(candidates)} model(s) accepted the study and none produced a result",
+                                route_name="adapter-failed", errors=errors)
 
 
 

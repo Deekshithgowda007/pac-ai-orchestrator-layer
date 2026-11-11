@@ -353,7 +353,9 @@ def select_models(profile: Dict[str, Any], registry: Registry, *, authorized_onl
         disabled_matches = [m["route_name"] for m in registry.manifests
                             if m not in registry.enabled and constraint_outcome(m, profile)[0] == "match"]
         if disabled_matches:
-            return NoMatch("model_disabled", "matching manifest(s) are not enabled in the registry lock", tuple(disabled_matches))
+            return NoMatch("model_disabled",
+                           "matching manifest(s) are not enabled in the registry lock: " + ", ".join(disabled_matches),
+                           tuple(disabled_matches))
         return NoMatch("no_manifest_for_profile",
                        f"no manifest accepts modality={profile.get('modality')} protocol_family={profile.get('protocol_family')} "
                        f"dimensionality={profile.get('dimensionality')}")
