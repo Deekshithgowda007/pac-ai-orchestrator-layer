@@ -1,0 +1,64 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "stenunet-xa",
+  "version": "1.0.0",
+  "route_name": "xa-stenosis-screening",
+  "display_name": "Coronary angiography stenosis screening (StenUNet)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "XA"
+    ],
+    "protocol_families": [
+      "xa_coronary"
+    ],
+    "dimensionality": [
+      "cine",
+      "2d_multiframe"
+    ],
+    "age_bands": "any",
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "MIT",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "segmentation",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings",
+      "stenosis_segments"
+    ],
+    "produces_seg": true,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "xa_stenunet",
+    "weights_env": "STENUNET_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 900
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "stenunet",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-stenosis-screening",
+    "gpu_recommended": true,
+    "notes": "Research XA stenosis screening model. Requires the StenUNet checkpoint and should be treated as preliminary AI support, not a final diagnosis."
+  }
+}

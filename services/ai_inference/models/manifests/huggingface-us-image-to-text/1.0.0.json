@@ -1,0 +1,60 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "huggingface-us-image-to-text",
+  "version": "1.0.0",
+  "route_name": "us-hf-2d-screening",
+  "display_name": "Ultrasound image-to-text screening (Hugging Face)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "US"
+    ],
+    "protocol_families": "any",
+    "dimensionality": [
+      "2d",
+      "2d_multiframe",
+      "cine"
+    ],
+    "age_bands": "any",
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "narrative",
+    "fields": [
+      "findings",
+      "confidence"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "us_hf_2d",
+    "weights_env": null,
+    "weights_required": false,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 600
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "huggingface-transformers",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-2d-screening",
+    "notes": "Uses a US-specific Hugging Face image-to-text fallback on a representative PNG rendered from ultrasound DICOM. Intended for descriptive support only, not diagnosis."
+  }
+}

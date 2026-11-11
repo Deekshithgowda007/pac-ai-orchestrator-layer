@@ -1,0 +1,42 @@
+{
+  "schema": "scansurex.registry_lock/1",
+  "comment": "Models enabled in this deployment, in priority order. heuristic-fallback is deliberately absent (SDD-SCANSURE-AI-002 D2).",
+  "enabled": [
+    {
+      "model_id": "monai-lung-nodule-retinanet",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "brats-mri-segresnet",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "echonet-dynamic-style-lv-function-lite",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "huggingface-us-image-to-text",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "stenunet-xa",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "torchxrayvision-densenet121",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "huggingface-2d",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "totalsegmentator-total",
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "totalsegmentator-total_mr",
+      "version": "1.0.0"
+    }
+  ]
+}

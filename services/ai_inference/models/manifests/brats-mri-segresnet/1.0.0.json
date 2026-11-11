@@ -1,0 +1,70 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "brats-mri-segresnet",
+  "version": "1.0.0",
+  "route_name": "mr-brats-segmentation",
+  "display_name": "Brain MRI tumour segmentation (BraTS SegResNet bundle)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "MR"
+    ],
+    "protocol_families": [
+      "mr_brain_multisequence"
+    ],
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": [
+      "head"
+    ],
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "segmentation",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings",
+      "segmentation_volume_ml"
+    ],
+    "produces_seg": true,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "mr_brats",
+    "weights_env": "MR_MONAI_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 1200
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "monai",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-brain-tumor-segmentation",
+    "body_parts": [
+      "BRAIN"
+    ],
+    "gpu_recommended": true,
+    "notes": "BraTS SegResNet brain MRI segmentation route. Requires a full T1c/T1/T2/FLAIR brain MRI input set and should be treated as preliminary screening support."
+  }
+}

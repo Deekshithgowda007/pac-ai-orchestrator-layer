@@ -1,0 +1,55 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "heuristic-fallback",
+  "version": "1.0.0",
+  "route_name": "heuristic-fallback",
+  "display_name": "Pixel-statistics heuristic (NOT a model)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": "any",
+    "protocol_families": "any",
+    "dimensionality": "any",
+    "age_bands": "any",
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "proprietary",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "heuristic",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "fallback",
+    "weights_env": null,
+    "weights_required": false,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 120
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "heuristic",
+    "diagnostic_support": "screening-only",
+    "report_type": "heuristic-signal-estimate",
+    "notes": "Voxel-statistics estimate; produces an abnormal/not-abnormal verdict and a confidence from no trained model. Disabled by default (SDD-SCANSURE-AI-002 D2); a deployment that enables it does so knowingly and its output is labelled heuristic."
+  }
+}
