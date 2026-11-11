@@ -17,7 +17,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from supabase import Client, create_client
 
 from dicom.dicom_sender import send_sr_to_dcm4chee
-from dicom.sr_builder import build_ai_sr
+from dicom.sr_builder import build_ai_sr, sr_payload
 from inference_engine import InferenceEngine
 
 load_dotenv()
@@ -209,20 +209,18 @@ def store_structured_report(study_uid: Optional[str], metadata: Dict[str, str], 
     if not STORE_DICOM_SR or not study_uid:
         return
     try:
-        sr_text = json.dumps(
-            {
-                "summary": summary,
-                "conclusion": report.get("conclusion"),
-                "impact": report.get("impact"),
-                "recommendation": report.get("recommendation"),
-            },
-            default=str,
-        )
+        # SDD-SCANSURE-AI-002 T4: the SR names the model that ran (manifest id, version, tier),
+        # says whether it is a reading at all, and lists the models considered. Nulls stay null.
+        body = sr_payload(report, summary)
         sr = build_ai_sr(
             study_uid=study_uid,
             patient_id=metadata.get("PatientID", "UNKNOWN"),
             patient_name=metadata.get("PatientName", "ANONYMOUS"),
-            result_text=sr_text,
+            result_text=json.dumps(body, default=str),
+            model_id=body["model_id"],
+            model_version=body["model_version"],
+            tier=body["tier"],
+            diagnostic=body["diagnostic"],
         )
         send_sr_to_dcm4chee(sr)
     except Exception as exc:
