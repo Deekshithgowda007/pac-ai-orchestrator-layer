@@ -1,0 +1,73 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "rsna-ich-ct-head",
+  "version": "1.0.0",
+  "route_name": "ct-head-haemorrhage-screening",
+  "display_name": "Non-contrast head CT intracranial haemorrhage screening (RSNA-ICH family) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CT"
+    ],
+    "protocol_families": [
+      "ct_head"
+    ],
+    "dimensionality": [
+      "3d",
+      "2d_multiframe"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": [
+      "head"
+    ],
+    "contrast": false
+  },
+  "license": {
+    "code": "UNVERIFIED",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "classification",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings",
+      "haemorrhage_subtypes"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "ct_head_ich",
+    "weights_env": "CT_HEAD_ICH_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 900
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "rsna-ich-cnn",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-ich-screening",
+    "body_parts": [
+      "HEAD",
+      "BRAIN",
+      "SKULL"
+    ],
+    "gpu_recommended": true,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1 widening). Not in registry.lock.json: no weights, no licence review, no validation report. See models/manifests/CANDIDATES.md for what must exist before it may be enabled."
+  }
+}

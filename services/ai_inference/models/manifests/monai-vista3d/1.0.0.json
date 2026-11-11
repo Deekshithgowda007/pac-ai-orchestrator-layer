@@ -1,0 +1,70 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "monai-vista3d",
+  "version": "1.0.0",
+  "route_name": "ct-anatomy-vista3d",
+  "display_name": "CT whole-body anatomy segmentation (MONAI VISTA-3D foundation model) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CT"
+    ],
+    "protocol_families": [
+      "ct_head",
+      "ct_chest",
+      "ct_abdomen_pelvis",
+      "ct_spine",
+      "ct_extremity",
+      "ct_angio"
+    ],
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "anatomy",
+    "fields": [
+      "findings",
+      "organ_volumes_ml",
+      "structures_present"
+    ],
+    "produces_seg": true,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "ct_vista3d",
+    "weights_env": "CT_VISTA3D_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "gpu",
+    "timeout_s": 1800
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "monai-vista3d",
+    "diagnostic_support": "anatomy-only",
+    "report_type": "anatomy-segmentation",
+    "body_parts": [],
+    "gpu_recommended": true,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1/2 widening). Anatomy only, like TotalSegmentator; never a verdict. Not in registry.lock.json: the MONAI model-zoo checkpoint is not staged on any host and no validation report exists. Needs a GPU in practice (owner decision outstanding). See models/manifests/CANDIDATES.md."
+  }
+}

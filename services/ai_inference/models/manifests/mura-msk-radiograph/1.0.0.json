@@ -1,0 +1,77 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "mura-msk-radiograph",
+  "version": "1.0.0",
+  "route_name": "cr-msk-abnormality-screening",
+  "display_name": "Musculoskeletal radiograph abnormality screening (MURA family) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CR",
+      "DX"
+    ],
+    "protocol_families": [
+      "cr_extremity"
+    ],
+    "dimensionality": [
+      "2d"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": [
+      "extremity"
+    ],
+    "contrast": "any"
+  },
+  "license": {
+    "code": "UNVERIFIED",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "classification",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "cr_msk_mura",
+    "weights_env": "CR_MSK_MURA_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 300
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "mura-densenet",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-msk-radiograph-screening",
+    "body_parts": [
+      "EXTREMITY",
+      "HAND",
+      "WRIST",
+      "ELBOW",
+      "SHOULDER",
+      "FOOT",
+      "ANKLE",
+      "KNEE"
+    ],
+    "gpu_recommended": false,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1 widening). Not in registry.lock.json: the Stanford MURA data are under a research-use agreement and no weights with a reviewed licence have been identified. See models/manifests/CANDIDATES.md."
+  }
+}

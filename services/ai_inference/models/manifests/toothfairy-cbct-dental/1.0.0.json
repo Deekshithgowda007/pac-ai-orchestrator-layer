@@ -1,0 +1,72 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "toothfairy-cbct-dental",
+  "version": "1.0.0",
+  "route_name": "cbct-dental-structure-segmentation",
+  "display_name": "Dental CBCT structure segmentation (teeth, canals, jaw; ToothFairy family) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CT"
+    ],
+    "protocol_families": [
+      "cbct_dental"
+    ],
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": [
+      "adult",
+      "adolescent"
+    ],
+    "body_parts": [
+      "jaw"
+    ],
+    "contrast": false
+  },
+  "license": {
+    "code": "UNVERIFIED",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "anatomy",
+    "fields": [
+      "findings",
+      "structures_present"
+    ],
+    "produces_seg": true,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "cbct_dental_seg",
+    "weights_env": "CBCT_DENTAL_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 1800
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "toothfairy-seg",
+    "diagnostic_support": "anatomy-only",
+    "report_type": "anatomy-segmentation",
+    "body_parts": [
+      "JAW",
+      "MANDIBLE",
+      "MAXILLA",
+      "TEETH"
+    ],
+    "gpu_recommended": true,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1/2 widening). Anatomy only; never a verdict. Not in registry.lock.json: challenge-derived weights have mixed licences and none has been reviewed; no validation report. See models/manifests/CANDIDATES.md."
+  }
+}

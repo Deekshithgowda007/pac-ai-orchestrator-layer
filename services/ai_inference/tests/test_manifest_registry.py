@@ -63,8 +63,10 @@ def registry(*manifests, enabled=None):
 
 
 class CommittedManifests(unittest.TestCase):
-    def test_ten_manifests_validate_and_nine_are_enabled(self):
-        self.assertEqual(len(COMMITTED.manifests), 10)
+    def test_sixteen_manifests_validate_and_nine_are_enabled(self):
+        # 10 from T2 + 6 rung-1 candidates (CANDIDATES.md), all six disabled; pinned in detail by
+        # tests/test_candidate_manifests.py
+        self.assertEqual(len(COMMITTED.manifests), 16)
         self.assertEqual(len(COMMITTED.enabled), 9)
         self.assertNotIn("heuristic-fallback", [m["route_name"] for m in COMMITTED.enabled], "D2: disabled by default")
         self.assertIsNotNone(COMMITTED.by_route("heuristic-fallback"), "but it exists, so a deployment may enable it knowingly")
@@ -295,8 +297,9 @@ class LegacyShape(unittest.TestCase):
         with patch.dict("os.environ", {"CT_MONAI_CHECKPOINT_PATH": "/nowhere.pt"}):
             self.assertFalse(model_registry.get_model_entry("ct-monai-screening")["diagnostic_available"])
 
-    def test_model_registry_list_iterates_eleven(self):
-        self.assertEqual(len(list(model_registry.MODEL_REGISTRY)), 11)
+    def test_model_registry_list_iterates_every_manifest_plus_unsupported(self):
+        # 16 manifests (10 from T2 + 6 disabled rung-1 candidates) + the synthetic unsupported entry
+        self.assertEqual(len(list(model_registry.MODEL_REGISTRY)), 17)
 
 
 if __name__ == "__main__":
