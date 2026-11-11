@@ -1,0 +1,72 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "mrnet-knee-mr",
+  "version": "1.0.0",
+  "route_name": "mr-knee-abnormality-screening",
+  "display_name": "Knee MRI abnormality / ACL / meniscal tear screening (MRNet family) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "MR"
+    ],
+    "protocol_families": [
+      "mr_msk"
+    ],
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": [
+      "adult",
+      "adolescent"
+    ],
+    "body_parts": [
+      "extremity"
+    ],
+    "contrast": false
+  },
+  "license": {
+    "code": "UNVERIFIED",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "classification",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "mr_knee_mrnet",
+    "weights_env": "MR_KNEE_MRNET_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 900
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "mrnet-cnn",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-knee-mr-screening",
+    "body_parts": [
+      "KNEE",
+      "EXTREMITY",
+      "LEG"
+    ],
+    "gpu_recommended": true,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1 widening). Not in registry.lock.json: the Stanford MRNet data are under a research-use agreement and no weights with a reviewed licence have been identified. See models/manifests/CANDIDATES.md."
+  }
+}

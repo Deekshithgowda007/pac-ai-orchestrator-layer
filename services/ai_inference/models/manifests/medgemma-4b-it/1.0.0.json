@@ -1,0 +1,65 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "medgemma-4b-it",
+  "version": "1.0.0",
+  "route_name": "vlm-radiograph-description",
+  "display_name": "Medical vision-language description of 2D radiology images (MedGemma 4B instruction-tuned) -- CANDIDATE, not enabled",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CR",
+      "DX",
+      "CT",
+      "MR"
+    ],
+    "protocol_families": "any",
+    "dimensionality": [
+      "2d",
+      "2d_multiframe"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "HAI-DEF-terms",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "narrative",
+    "fields": [
+      "findings"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "vlm_medgemma",
+    "weights_env": "MEDGEMMA_MODEL_DIR",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "gpu",
+    "timeout_s": 600
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "medgemma",
+    "diagnostic_support": "descriptive-only",
+    "report_type": "ai-image-description",
+    "body_parts": [],
+    "gpu_recommended": true,
+    "notes": "Candidate manifest (SDD-SCANSURE-AI-002 rung-1 widening). Narrative output only: findings text, no abnormal flag, no confidence -- a sentence from a language model is not a verdict. Not in registry.lock.json: the Health AI Developer Foundations terms must be accepted by the owner, a GPU is required, and no validation report exists. See models/manifests/CANDIDATES.md."
+  }
+}
