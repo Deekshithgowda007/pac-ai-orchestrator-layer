@@ -217,6 +217,15 @@ def build_clinical_summary(result, metadata):
         technique = f"Multisequence brain MRI processed; approximately {frame_count} slices analyzed."
         findings = result.get("finding") or "Brain MRI segmentation screening did not mark a dominant candidate lesion burden."
         impression = result.get("finding") or "Neuroradiology review is required."
+    elif report_type == "descriptive-summary":
+        # Rung 3 of the ladder (SDD-002 T3b): the study described, not interpreted.
+        exam = result.get("anatomy_involved") or exam
+        lines = result.get("observations") or []
+        technique = next((l for l in lines if l.startswith("Technique:")), technique)
+        # No canned sentence here: an empty description asserts nothing, a sentence no model
+        # produced would read as one (CLAUDE.md: absence of signal is never defaulted).
+        findings = "\n".join(l for l in lines if not l.startswith("Technique:"))
+        impression = result.get("finding") or ""
     elif report_type == "non-diagnostic-anatomy" and modality in {"MR", "MRI"}:
         exam = f"MR {body_part}".strip()
         technique = (
@@ -361,8 +370,12 @@ def process_job(job):
     # -----------------------
     # Build DICOM SR
     # -----------------------
+    # SDD-SCANSURE-AI-002 T4: the manifest stamp travels into the SR; None prints as None,
+    # it is not replaced with a value the engine did not produce.
     sr_text = (
-        f"Model: {result.get('model_name')}\n"
+        f"Model: {result.get('model_id') or result.get('model_name')}@{result.get('model_version')} "
+        f"(tier {result.get('tier')})\n"
+        f"Status: {result.get('analysis_status')}\n"
         f"Finding: {result.get('finding')}\n"
         f"Abnormal: {result.get('abnormal')}\n"
         f"Confidence: {result.get('confidence')}"
@@ -372,7 +385,11 @@ def process_job(job):
         study_uid=study_uid,
         patient_id="UNKNOWN",
         patient_name="ANONYMOUS",
-        result_text=sr_text
+        result_text=sr_text,
+        model_id=result.get("model_id") or result.get("model_name"),
+        model_version=result.get("model_version"),
+        tier=result.get("tier"),
+        diagnostic=None if (result.get("abnormal") is not None or result.get("confidence") is not None) else False,
     )
 
     send_sr_to_dcm4chee(sr)
@@ -414,6 +431,11 @@ def process_job(job):
             "routing_decision": result.get("routing_decision", {}),
             "support_matrix": result.get("support_matrix", {}),
             "model_registry": result.get("support_matrix", {}),
+            "model_id": result.get("model_id"),
+            "model_version": result.get("model_version"),
+            "tier": result.get("tier"),
+            "ladder": result.get("ladder", []),
+            "supporting_results": result.get("supporting_results", []),
         }
 
         payload = {

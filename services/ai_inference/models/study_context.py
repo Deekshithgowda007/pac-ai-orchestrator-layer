@@ -9,6 +9,8 @@ import numpy as np
 import pydicom
 from PIL import Image
 
+from models.study_profile import build_study_profile
+
 try:
     from pydicom.pixels import apply_voi_lut
 except Exception:  # pragma: no cover - compatibility fallback
@@ -24,6 +26,9 @@ class StudyContext:
     body_part: str
     series_uid: str
     study_uid: str
+    #: StudyProfile (models.study_profile), derived from EVERY file's header. What the routing
+    #: rule matches manifests against (SDD-SCANSURE-AI-002 T3). None only when no file was readable.
+    profile: Optional[Dict] = None
 
     def load_series_map(self) -> Dict[str, List[pydicom.Dataset]]:
         series_map: Dict[str, List[pydicom.Dataset]] = defaultdict(list)
@@ -286,12 +291,22 @@ def collect_study_context(dicom_path: str) -> Optional[StudyContext]:
                 metadata[elem.keyword] = repr(elem.value)
 
     modality = str(metadata.get("Modality", "") or "").upper()
+    # Legacy fields the adapters still read for their narrative. The ROUTING decision no longer
+    # reads them: it matches manifests against the profile below, where an absent body part is
+    # null rather than whatever the study description happened to say.
     body_part = (
         metadata.get("BodyPartExamined")
         or metadata.get("StudyDescription")
         or metadata.get("SeriesDescription")
         or "UNKNOWN"
     )
+    headers = []
+    for path in sorted(files):
+        try:
+            headers.append(pydicom.dcmread(path, stop_before_pixels=True, force=True))
+        except Exception:
+            continue
+    profile = build_study_profile(headers)
     return StudyContext(
         dicom_path=dicom_path,
         files=sorted(files),
@@ -300,4 +315,5 @@ def collect_study_context(dicom_path: str) -> Optional[StudyContext]:
         body_part=str(body_part),
         series_uid=str(metadata.get("SeriesInstanceUID", "unknown")),
         study_uid=str(metadata.get("StudyInstanceUID", "unknown")),
+        profile=profile,
     )

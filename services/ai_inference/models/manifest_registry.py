@@ -353,7 +353,9 @@ def select_models(profile: Dict[str, Any], registry: Registry, *, authorized_onl
         disabled_matches = [m["route_name"] for m in registry.manifests
                             if m not in registry.enabled and constraint_outcome(m, profile)[0] == "match"]
         if disabled_matches:
-            return NoMatch("model_disabled", "matching manifest(s) are not enabled in the registry lock", tuple(disabled_matches))
+            return NoMatch("model_disabled",
+                           "matching manifest(s) are not enabled in the registry lock: " + ", ".join(disabled_matches),
+                           tuple(disabled_matches))
         return NoMatch("no_manifest_for_profile",
                        f"no manifest accepts modality={profile.get('modality')} protocol_family={profile.get('protocol_family')} "
                        f"dimensionality={profile.get('dimensionality')}")
@@ -410,3 +412,38 @@ def legacy_entry(manifest: Dict[str, Any]) -> Dict[str, Any]:
     if not weights["diagnostic_available"]:
         entry["diagnostic_available"] = False
     return entry
+
+
+def explain_candidates(profile: Dict[str, Any], registry: Registry, *, authorized_only: Optional[bool] = None,
+                       today: Optional[date] = None) -> List[Dict[str, Any]]:
+    """One line per manifest: why it did or did not qualify for this profile. The routing ladder
+    records this on every result so a reader sees which models were considered, not just which ran.
+    Outcomes: matched / mismatch:<dimension> / incomplete:<field> / model_disabled / not_authorized /
+    weights_unavailable."""
+    if authorized_only is None:
+        authorized_only = authorized_only_enabled()
+    rows: List[Dict[str, Any]] = []
+    valid_profile = isinstance(profile, dict) and profile.get("schema") == vocab.PROFILE_SCHEMA
+    for manifest in registry.manifests:
+        row = {"route_name": manifest["route_name"], "model_id": manifest["model_id"], "version": manifest["version"],
+               "tier": manifest["tier"], "kind": manifest["outputs"]["kind"]}
+        if not valid_profile:
+            row.update(outcome="incomplete", detail="no StudyProfile")
+        else:
+            outcome, detail = constraint_outcome(manifest, profile)
+            if outcome == "mismatch":
+                row.update(outcome="mismatch", detail=detail)
+            elif outcome == "incomplete":
+                row.update(outcome="incomplete", detail=detail)
+            elif manifest not in registry.enabled:
+                row.update(outcome="model_disabled", detail=None)
+            elif authorized_only and not (manifest["tier"] == "T1" and _authorization_current(manifest, today)):
+                row.update(outcome="not_authorized", detail=None)
+            else:
+                weights = resolve_weights(manifest)
+                if manifest["runtime"].get("weights_required") and not weights["weights_present"]:
+                    row.update(outcome="weights_unavailable", detail=manifest["runtime"].get("weights_env"))
+                else:
+                    row.update(outcome="matched", detail=None)
+        rows.append(row)
+    return rows
