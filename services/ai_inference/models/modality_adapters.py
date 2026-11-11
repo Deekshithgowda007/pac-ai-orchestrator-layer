@@ -14,7 +14,8 @@ import requests
 from models.hf_utils import resolve_hf_bundle_dir
 from models.heuristic_fallback import HeuristicFallbackEngine
 from models import model_registry
-from models.manifest_registry import NoMatch, select_models
+from models.manifest_registry import NoMatch, explain_candidates, select_models
+from models.study_description import StudyDescriptor
 from models.study_context import StudyContext
 from models.support_matrix import describe_support
 
@@ -1327,14 +1328,18 @@ class AdapterRegistry:
         # against the StudyProfile. The heuristic fallback is no longer appended: a study nothing
         # accepts is reported as unavailable, never given a verdict from voxel statistics.
         self.last_no_match: Optional[NoMatch] = None
+        # Rung 3 of the ladder (SDD-002 T3b): runs for every readable study, after the models.
+        self.descriptor = StudyDescriptor()
 
-    def _select_adapters(self, context: StudyContext) -> List[tuple[str, ModalityAdapter, str]]:
+    def _select_adapters(self, context: StudyContext) -> List[tuple]:
+        """(route_name, adapter, reason, manifest) for every manifest that accepts the study, best
+        first. Empty when none does; self.last_no_match then says why."""
         self.last_no_match = None
         outcome = select_models(context.profile or {}, model_registry.registry())
         if isinstance(outcome, NoMatch):
             self.last_no_match = outcome
             return []
-        selected: List[tuple[str, ModalityAdapter, str]] = []
+        selected: List[tuple] = []
         for match in outcome:
             adapter_name = match.manifest["runtime"]["adapter"]
             adapter = self.adapters.get(adapter_name)
@@ -1345,7 +1350,7 @@ class AdapterRegistry:
             reason = (f"{match.tier} manifest {match.model_id} accepts "
                       f"{context.profile.get('modality')}/{context.profile.get('protocol_family')}/"
                       f"{context.profile.get('dimensionality')}")
-            selected.append((match.route_name, adapter, reason))
+            selected.append((match.route_name, adapter, reason, match.manifest))
         return selected
 
     @staticmethod
@@ -1390,40 +1395,79 @@ class AdapterRegistry:
             "support_matrix": describe_support(route_name),
         }
 
+    def _stamp(self, result: Dict[str, Any], route_name: str, reason: str, manifest: Dict[str, Any],
+               context: StudyContext) -> None:
+        result["adapter_name"] = result.get("adapter_name") or self.adapters[manifest["runtime"]["adapter"]].__class__.__name__
+        result["model_id"] = manifest["model_id"]
+        result["model_version"] = manifest["version"]
+        result["tier"] = manifest["tier"]
+        result["routing_decision"] = {
+            "route_name": route_name,
+            "reason": reason,
+            "kind": manifest["outputs"]["kind"],
+            "model_id": manifest["model_id"],
+            "model_version": manifest["version"],
+            "tier": manifest["tier"],
+            "modality": context.modality,
+            "body_part": context.body_part,
+        }
+        result["support_matrix"] = describe_support(route_name)
+
     def analyze(self, context: StudyContext) -> Dict[str, Any]:
-        errors: List[str] = []
-        candidates = self._select_adapters(context)
-        if not candidates:
-            no_match = self.last_no_match or NoMatch("no_manifest_for_profile", "no manifest accepted the study")
-            log.info("no model for study: %s -- %s", no_match.reason, no_match.detail)
-            return self.unavailable(context, no_match.reason, no_match.detail)
-        for route_name, adapter, route_reason in candidates:
-            if not adapter.supports(context):
-                continue
+        """The routing ladder (SDD-SCANSURE-AI-002 T3b).
+
+        Rung 1: pathology models whose manifests accept the study, best first; the first that
+        produces a result is the primary. Rung 2: anatomy models, run alongside and attached as
+        supporting results. Rung 3: the descriptive summary, for every readable study, always.
+        The result is the primary reading when there is one, otherwise the description. Either
+        way it carries ``ladder`` (one line per manifest: why it did or did not run) and
+        ``supporting_results``. Nothing on this ladder produces a verdict from pixel statistics.
+        """
+        registry = model_registry.registry()
+        ladder = explain_candidates(context.profile or {}, registry)
+        by_route = {row["route_name"]: row for row in ladder}
+        primary: Optional[Dict[str, Any]] = None
+        supporting: List[Dict[str, Any]] = []
+        for route_name, adapter, reason, manifest in self._select_adapters(context):
+            row = by_route.setdefault(route_name, {"route_name": route_name})
             try:
+                if not adapter.supports(context):
+                    row.update(outcome="declined", detail=None)
+                    continue
                 result = adapter.analyze(context)
-                result["adapter_name"] = adapter.__class__.__name__
-                result["routing_decision"] = {
-                    "route_name": route_name,
-                    "reason": route_reason,
-                    "modality": context.modality,
-                    "body_part": context.body_part,
-                }
-                result["support_matrix"] = describe_support(route_name)
-                if errors:
-                    result.setdefault("limitations", []).append(
-                        f"Earlier adapters failed before success: {'; '.join(errors)}"
-                    )
-                return result
             except Exception as exc:
-                errors.append(f"{adapter.__class__.__name__}: {exc}")
+                log.warning("adapter %s failed on %s: %s", adapter.__class__.__name__, context.study_uid, exc)
+                row.update(outcome="failed", detail=f"{type(exc).__name__}: {exc}")
                 continue
-        # Every accepted model failed or declined. Until T3 this raised, and InferenceEngine ran
-        # the heuristic on the pixels instead; now the failure is the result, with each error named.
-        log.warning("every matched adapter failed for %s: %s", context.study_uid, "; ".join(errors) or "all declined")
-        return self.unavailable(context, "adapter_failed",
-                                f"{len(candidates)} model(s) accepted the study and none produced a result",
-                                route_name="adapter-failed", errors=errors)
+            self._stamp(result, route_name, reason, manifest, context)
+            row.update(outcome="ran", detail=None)
+            if manifest["outputs"]["kind"] == "anatomy":
+                supporting.append(result)
+            elif primary is None:
+                primary = result
+            else:
+                supporting.append(result)
+        if self.last_no_match is not None:
+            ladder.append({"route_name": "registry", "outcome": self.last_no_match.reason, "detail": self.last_no_match.detail})
+
+        anatomy = [r for r in supporting if (r.get("routing_decision") or {}).get("kind") == "anatomy"]
+        description = self.descriptor.describe(context, anatomy=anatomy, ladder=ladder)
+        description["routing_decision"] = {
+            "route_name": "study-descriptor", "kind": "descriptive", "model_id": description["model_id"],
+            "model_version": description["model_version"], "tier": None,
+            "reason": "rung 3: every readable study is described; this is not a model and makes no clinical claim",
+            "modality": context.modality, "body_part": context.body_part,
+        }
+        description["support_matrix"] = describe_support("study-descriptor")
+        if primary is not None:
+            primary["supporting_results"] = supporting + [description]
+            primary["ladder"] = ladder
+            return primary
+        description["supporting_results"] = supporting
+        description["ladder"] = ladder
+        log.info("no pathology model ran for %s; descriptive summary returned (%s)", context.study_uid,
+                 "; ".join(f"{r.get('route_name')}={r.get('outcome')}" for r in ladder))
+        return description
 
 
 

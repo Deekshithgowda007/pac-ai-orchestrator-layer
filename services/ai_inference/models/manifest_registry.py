@@ -412,3 +412,38 @@ def legacy_entry(manifest: Dict[str, Any]) -> Dict[str, Any]:
     if not weights["diagnostic_available"]:
         entry["diagnostic_available"] = False
     return entry
+
+
+def explain_candidates(profile: Dict[str, Any], registry: Registry, *, authorized_only: Optional[bool] = None,
+                       today: Optional[date] = None) -> List[Dict[str, Any]]:
+    """One line per manifest: why it did or did not qualify for this profile. The routing ladder
+    records this on every result so a reader sees which models were considered, not just which ran.
+    Outcomes: matched / mismatch:<dimension> / incomplete:<field> / model_disabled / not_authorized /
+    weights_unavailable."""
+    if authorized_only is None:
+        authorized_only = authorized_only_enabled()
+    rows: List[Dict[str, Any]] = []
+    valid_profile = isinstance(profile, dict) and profile.get("schema") == vocab.PROFILE_SCHEMA
+    for manifest in registry.manifests:
+        row = {"route_name": manifest["route_name"], "model_id": manifest["model_id"], "version": manifest["version"],
+               "tier": manifest["tier"], "kind": manifest["outputs"]["kind"]}
+        if not valid_profile:
+            row.update(outcome="incomplete", detail="no StudyProfile")
+        else:
+            outcome, detail = constraint_outcome(manifest, profile)
+            if outcome == "mismatch":
+                row.update(outcome="mismatch", detail=detail)
+            elif outcome == "incomplete":
+                row.update(outcome="incomplete", detail=detail)
+            elif manifest not in registry.enabled:
+                row.update(outcome="model_disabled", detail=None)
+            elif authorized_only and not (manifest["tier"] == "T1" and _authorization_current(manifest, today)):
+                row.update(outcome="not_authorized", detail=None)
+            else:
+                weights = resolve_weights(manifest)
+                if manifest["runtime"].get("weights_required") and not weights["weights_present"]:
+                    row.update(outcome="weights_unavailable", detail=manifest["runtime"].get("weights_env"))
+                else:
+                    row.update(outcome="matched", detail=None)
+        rows.append(row)
+    return rows

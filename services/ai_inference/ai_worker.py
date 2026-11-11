@@ -217,6 +217,14 @@ def build_clinical_summary(result, metadata):
         technique = f"Multisequence brain MRI processed; approximately {frame_count} slices analyzed."
         findings = result.get("finding") or "Brain MRI segmentation screening did not mark a dominant candidate lesion burden."
         impression = result.get("finding") or "Neuroradiology review is required."
+    elif report_type == "descriptive-summary":
+        # Rung 3 of the ladder (SDD-002 T3b): the study described, not interpreted.
+        exam = result.get("anatomy_involved") or exam
+        lines = result.get("observations") or []
+        technique = next((l for l in lines if l.startswith("Technique:")), technique)
+        findings = "
+".join(l for l in lines if not l.startswith("Technique:")) or "No description could be produced."
+        impression = result.get("finding") or "Descriptive AI summary only; radiologist interpretation is required."
     elif report_type == "non-diagnostic-anatomy" and modality in {"MR", "MRI"}:
         exam = f"MR {body_part}".strip()
         technique = (
@@ -414,6 +422,11 @@ def process_job(job):
             "routing_decision": result.get("routing_decision", {}),
             "support_matrix": result.get("support_matrix", {}),
             "model_registry": result.get("support_matrix", {}),
+            "model_id": result.get("model_id"),
+            "model_version": result.get("model_version"),
+            "tier": result.get("tier"),
+            "ladder": result.get("ladder", []),
+            "supporting_results": result.get("supporting_results", []),
         }
 
         payload = {
