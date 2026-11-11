@@ -11,9 +11,12 @@ synthetic entry because ``UnsupportedModalityAdapter``'s result names that route
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 from models import manifest_registry
+
+log = logging.getLogger("ai_inference.model_registry")
 
 _UNSUPPORTED_ENTRY: Dict[str, Any] = {
     "route_name": "unsupported-modalities",
@@ -40,7 +43,28 @@ def registry() -> manifest_registry.Registry:
     global _registry
     if _registry is None:
         _registry = manifest_registry.load_registry()
+        _log_mode(_registry)
     return _registry
+
+
+def _log_mode(reg: manifest_registry.Registry) -> None:
+    """SDD-SCANSURE-AI-002 §4: say at start which mode this deployment runs in.
+
+    AI_AUTHORIZED_ONLY=true with no enabled manifest carrying a current authorisation means
+    every study will be described, never read -- a legitimate pilot state, but one an
+    operator must have chosen knowingly, so it is a WARN rather than silence.
+    """
+    authorized_only = manifest_registry.authorized_only_enabled()
+    qualifying = [m["model_id"] for m in reg.enabled if manifest_registry._authorization_current(m)]
+    log.info(
+        "AI registry loaded: %d manifest(s), %d enabled, authorized_only=%s, %d with current authorization (lock %s)",
+        len(reg.manifests), len(reg.enabled), authorized_only, len(qualifying), reg.lock_path,
+    )
+    if authorized_only and not qualifying:
+        log.warning(
+            "AI_AUTHORIZED_ONLY=true but no enabled manifest carries a current regulator authorization: "
+            "no model may produce a reading; every study will get a descriptive summary and go to the radiologist"
+        )
 
 
 def reset_cache() -> None:
