@@ -1,0 +1,76 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "torchxrayvision-densenet121",
+  "version": "1.0.0",
+  "route_name": "chest-radiograph-screening",
+  "display_name": "Chest radiograph screening (TorchXRayVision DenseNet-121)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CR",
+      "DX"
+    ],
+    "protocol_families": [
+      "cr_chest"
+    ],
+    "dimensionality": [
+      "2d"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": [
+      "chest"
+    ],
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "classification",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings",
+      "pathology_scores"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [
+      "CheXpert",
+      "NIH-CXR14",
+      "MIMIC-CXR",
+      "PadChest"
+    ],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "xrayvision",
+    "weights_env": null,
+    "weights_required": false,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 120
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "torchxrayvision",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-screening",
+    "body_parts": [
+      "CHEST",
+      "LUNG"
+    ],
+    "notes": "Provides chest radiograph screening labels only; not a final radiology diagnosis. (MG removed from the legacy modality list in SDD-002 T2: a mammogram is not a chest radiograph.)"
+  }
+}

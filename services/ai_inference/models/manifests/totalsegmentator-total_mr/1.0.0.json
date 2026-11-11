@@ -1,0 +1,60 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "totalsegmentator-total_mr",
+  "version": "1.0.0",
+  "route_name": "mr-anatomy-segmentation",
+  "display_name": "MR anatomy segmentation (TotalSegmentator MR)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "MR"
+    ],
+    "protocol_families": "any",
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": "any",
+    "body_parts": "any",
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "anatomy",
+    "fields": [
+      "anatomy_involved",
+      "organ_volumes_ml"
+    ],
+    "produces_seg": true,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "totalseg_mr",
+    "weights_env": null,
+    "weights_required": false,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 1800
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "totalsegmentator",
+    "diagnostic_support": "anatomy-only",
+    "report_type": "non-diagnostic-anatomy",
+    "gpu_recommended": true,
+    "diagnostic_available": false,
+    "notes": "Provides MR anatomy segmentation only unless a trained pathology model is added."
+  }
+}

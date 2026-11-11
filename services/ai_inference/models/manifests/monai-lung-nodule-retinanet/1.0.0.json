@@ -1,0 +1,72 @@
+{
+  "schema": "scansurex.model_manifest/1",
+  "model_id": "monai-lung-nodule-retinanet",
+  "version": "1.0.0",
+  "route_name": "ct-monai-screening",
+  "display_name": "Chest CT pulmonary nodule screening (MONAI RetinaNet bundle)",
+  "tier": "T3",
+  "intended_use": {
+    "modalities": [
+      "CT"
+    ],
+    "protocol_families": [
+      "ct_chest"
+    ],
+    "dimensionality": [
+      "3d"
+    ],
+    "age_bands": [
+      "adult"
+    ],
+    "body_parts": [
+      "chest"
+    ],
+    "contrast": "any"
+  },
+  "license": {
+    "code": "Apache-2.0",
+    "authorization": null,
+    "dpa_reference": null
+  },
+  "outputs": {
+    "kind": "detection",
+    "fields": [
+      "abnormal",
+      "confidence",
+      "findings",
+      "nodules"
+    ],
+    "produces_seg": false,
+    "produces_sr": true
+  },
+  "validation": {
+    "report": null,
+    "datasets": [],
+    "metrics": {},
+    "internal_concordance": null
+  },
+  "runtime": {
+    "adapter": "ct_monai",
+    "weights_env": "CT_MONAI_CHECKPOINT_PATH",
+    "weights_required": true,
+    "weights_sha256": null,
+    "device": "cpu",
+    "timeout_s": 900
+  },
+  "labels": {
+    "cdsco_text": null,
+    "screening_only": true
+  },
+  "legacy": {
+    "model_family": "monai-retinanet",
+    "diagnostic_support": "screening-only",
+    "report_type": "preliminary-lung-nodule-screening",
+    "body_parts": [
+      "CHEST",
+      "LUNG",
+      "THORAX"
+    ],
+    "gpu_recommended": true,
+    "notes": "MONAI lung_nodule_ct_detection RetinaNet route for chest CT pulmonary nodule screening. Requires the external bundle checkpoint and should be treated as preliminary screening support only."
+  }
+}
